@@ -12,6 +12,18 @@ $user_id = $_SESSION['user_id'];
 $first_name = $_SESSION['first_name'];
 $last_name = $_SESSION['last_name'];
 
+// Get user profile picture
+$user_query = "SELECT profile_picture FROM users WHERE user_id = ?";
+$stmt = $conn->prepare($user_query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$user_data = $stmt->get_result()->fetch_assoc();
+$stmt->close();
+
+$profile_pic = isset($user_data['profile_picture']) ? $user_data['profile_picture'] : 'default.jpg';
+$profile_pic_path = '../assets/images/profiles/' . $profile_pic;
+$has_custom_pic = $profile_pic != 'default.jpg' && file_exists($profile_pic_path);
+
 // Get filter parameters
 $search = isset($_GET['search']) ? sanitize_input($_GET['search']) : '';
 $category = isset($_GET['category']) ? sanitize_input($_GET['category']) : '';

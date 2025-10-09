@@ -3,357 +3,638 @@ session_start();
 require_once '../config/database.php';
 require_once '../includes/functions.php';
 
-// Check if user is logged in and is a student
-if (!isset($_SESSION['user_id']) || $_SESSION['user_type'] !== 'student') {
-    header('Location: ../auth/login.php');
+if (!is_logged_in() || !is_student()) {
+    header("Location: ../auth/login.php");
     exit();
 }
 
-$event_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+$user_id = $_SESSION['user_id'];
+$first_name = $_SESSION['first_name'];
+$last_name = $_SESSION['last_name'];
 
-// Get event details
-$sql = "SELECT e.*, u.first_name, u.last_name,
-        (SELECT COUNT(*) FROM event_registrations WHERE event_id = e.event_id AND status = 'confirmed') as registered_count,
-        (SELECT COUNT(*) FROM event_registrations WHERE event_id = e.event_id AND user_id = ? AND status IN ('pending', 'confirmed')) as is_registered
-        FROM events e 
-        LEFT JOIN users u ON e.created_by = u.user_id 
-        WHERE e.event_id = ? AND e.status = 'published'";
-
-$stmt = $conn->prepare($sql);
-$stmt->bind_param("ii", $_SESSION['user_id'], $event_id);
+// Get user profile picture
+$user_query = "SELECT profile_picture FROM users WHERE user_id = ?";
+$stmt = $conn->prepare($user_query);
+$stmt->bind_param("i", $user_id);
 $stmt->execute();
-$event = $stmt->get_result()->fetch_assoc();
+$user_data = $stmt->get_result()->fetch_assoc();
+$stmt->close();
 
-if (!$event) {
-    header('Location: view-events.php');
+$profile_pic = isset($user_data['profile_picture']) ? $user_data['profile_picture'] : 'default.jpg';
+$profile_pic_path = '../assets/images/profiles/' . $profile_pic;
+$has_custom_pic = $profile_pic != 'default.jpg' && file_exists($profile_pic_path);
+
+// Get event ID
+if (!isset($_GET['id']) || empty($_GET['id'])) {
+    header("Location: view-events.php");
     exit();
 }
 
-// Handle registration
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register'])) {
-    $insert_sql = "INSERT INTO event_registrations (event_id, user_id, status, registered_at) VALUES (?, ?, 'confirmed', NOW())";
-    $insert_stmt = $conn->prepare($insert_sql);
-    $insert_stmt->bind_param("ii", $event_id, $_SESSION['user_id']);
+$event_id = intval($_GET['id']);
+
+// Handle Registration
+if (isset($_POST['register'])) {
+    // Check if already registered
+    $check_stmt = $conn->prepare("SELECT registration_id FROM event_registrations WHERE event_id = ? AND user_id = ?");
+    $check_stmt->bind_param("ii", $event_id, $user_id);
+    $check_stmt->execute();
+    $result = $check_stmt->get_result();
     
-    if ($insert_stmt->execute()) {
-        header("Location: event-details.php?id=" . $event_id . "&success=1");
-        exit();
+    if ($result->num_rows > 0) {
+        set_message('info', 'You are already registered for this event');
+    } else {
+        $register_stmt = $conn->prepare("INSERT INTO event_registrations (event_id, user_id) VALUES (?, ?)");
+        $register_stmt->bind_param("ii", $event_id, $user_id);
+        
+        if ($register_stmt->execute()) {
+            set_message('success', 'Successfully registered for this event!');
+            log_activity($conn, $user_id, 'Event Registration', 'Registered for event ID: ' . $event_id);
+        } else {
+            set_message('danger', 'Failed to register. Please try again.');
+        }
+        $register_stmt->close();
     }
+    $check_stmt->close();
+    
+    header("Location: event-details.php?id=" . $event_id);
+    exit();
 }
 
-// Handle unregister
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['unregister'])) {
-    $delete_sql = "DELETE FROM event_registrations WHERE event_id = ? AND user_id = ?";
-    $delete_stmt = $conn->prepare($delete_sql);
-    $delete_stmt->bind_param("ii", $event_id, $_SESSION['user_id']);
+// Handle Unregister
+if (isset($_POST['unregister'])) {
+    $delete_stmt = $conn->prepare("DELETE FROM event_registrations WHERE event_id = ? AND user_id = ?");
+    $delete_stmt->bind_param("ii", $event_id, $user_id);
     
     if ($delete_stmt->execute()) {
-        header("Location: event-details.php?id=" . $event_id . "&unregistered=1");
-        exit();
+        set_message('success', 'Successfully unregistered from this event');
+        log_activity($conn, $user_id, 'Event Unregistration', 'Unregistered from event ID: ' . $event_id);
+    } else {
+        set_message('danger', 'Failed to unregister. Please try again.');
     }
+    $delete_stmt->close();
+    
+    header("Location: event-details.php?id=" . $event_id);
+    exit();
 }
-?>
 
+// Get event details
+$event_query = "SELECT e.*, 
+                (SELECT COUNT(*) FROM event_registrations WHERE event_id = e.event_id) as registered_count,
+                (SELECT COUNT(*) FROM event_registrations WHERE event_id = e.event_id AND user_id = ?) as user_registered,
+                u.first_name, u.last_name
+                FROM events e
+                LEFT JOIN users u ON e.created_by = u.user_id
+                WHERE e.event_id = ? AND e.is_published = 1";
+$stmt = $conn->prepare($event_query);
+$stmt->bind_param("ii", $user_id, $event_id);
+$stmt->execute();
+$result = $stmt->get_result();
+
+if ($result->num_rows == 0) {
+    header("Location: view-events.php");
+    exit();
+}
+
+$event = $result->fetch_assoc();
+$stmt->close();
+
+// Get registered users
+$attendees_query = "SELECT u.first_name, u.last_name, u.profile_picture, er.registration_date
+                    FROM event_registrations er
+                    JOIN users u ON er.user_id = u.user_id
+                    WHERE er.event_id = ?
+                    ORDER BY er.registration_date DESC
+                    LIMIT 10";
+$attendees_stmt = $conn->prepare($attendees_query);
+$attendees_stmt->bind_param("i", $event_id);
+$attendees_stmt->execute();
+$attendees = $attendees_stmt->get_result();
+$attendees_stmt->close();
+
+// Check if registration is still open
+$registration_open = strtotime($event['event_date']) > time();
+if ($event['registration_deadline']) {
+    $registration_open = $registration_open && strtotime($event['registration_deadline']) > time();
+}
+
+// Check if event is full
+$is_full = $event['max_participants'] && $event['registered_count'] >= $event['max_participants'];
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?php echo htmlspecialchars($event['title']); ?> - Event Details</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <title><?php echo htmlspecialchars($event['event_title']); ?> - SAO Events</title>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Inter', sans-serif;
         }
 
         body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f8f9fa;
         }
 
-        .container {
-            max-width: 1200px;
+        .navbar {
+            background: white;
+            border-bottom: 1px solid #e5e7eb;
+            padding: 16px 48px;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        .nav-container {
+            max-width: 1440px;
             margin: 0 auto;
+            display: flex;
+            align-items: center;
+            gap: 16px;
         }
 
         .back-btn {
-            display: inline-block;
-            padding: 12px 24px;
-            background: white;
-            color: #667eea;
+            padding: 8px 16px;
+            background: #f3f4f6;
+            color: #1a1a1a;
             text-decoration: none;
-            border-radius: 10px;
-            margin-bottom: 20px;
-            font-weight: 600;
-            transition: all 0.3s;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background 0.2s;
         }
 
         .back-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+            background: #e5e7eb;
         }
 
-        .event-card {
-            background: white;
-            border-radius: 20px;
-            overflow: hidden;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        .logo-area {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-img {
+            width: 36px;
+            height: 36px;
+        }
+
+        .brand-name {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .main-container {
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 0 48px;
         }
 
         .event-header {
-            position: relative;
-            height: 400px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: white;
+            border-radius: 16px;
+            overflow: hidden;
+            margin-bottom: 24px;
+            border: 1px solid #e5e7eb;
         }
 
-        .event-image {
+        .event-hero {
             width: 100%;
-            height: 100%;
+            height: 400px;
             object-fit: cover;
+            background: linear-gradient(135deg, #1e3a8a, #3b82f6);
         }
 
-        .event-badge {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            padding: 10px 20px;
-            background: rgba(255,255,255,0.95);
-            color: #667eea;
-            border-radius: 25px;
-            font-weight: 600;
-            font-size: 14px;
-            backdrop-filter: blur(10px);
-        }
-
-        .event-body {
+        .event-content {
             padding: 40px;
         }
 
-        .event-title {
-            font-size: 32px;
-            font-weight: 700;
-            color: #1a202c;
+        .event-meta-top {
+            display: flex;
+            gap: 12px;
             margin-bottom: 20px;
         }
 
-        .event-meta {
+        .badge {
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .badge-category {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .badge-status {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .badge-full {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .event-title {
+            font-size: 36px;
+            font-weight: 700;
+            color: #111827;
+            margin-bottom: 16px;
+            line-height: 1.2;
+        }
+
+        .event-meta-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 20px;
-            margin-bottom: 30px;
-            padding-bottom: 30px;
-            border-bottom: 2px solid #f0f0f0;
+            margin-bottom: 32px;
         }
 
         .meta-item {
             display: flex;
             align-items: center;
             gap: 12px;
+            padding: 16px;
+            background: #f9fafb;
+            border-radius: 10px;
         }
 
         .meta-icon {
-            width: 45px;
-            height: 45px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-radius: 12px;
+            font-size: 24px;
+        }
+
+        .meta-text {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .meta-label {
+            font-size: 12px;
+            color: #6b7280;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .meta-value {
+            font-size: 15px;
+            color: #111827;
+            font-weight: 600;
+        }
+
+        .content-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            border: 1px solid #e5e7eb;
+        }
+
+        .card-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #f3f4f6;
+        }
+
+        .description {
+            color: #374151;
+            font-size: 15px;
+            line-height: 1.8;
+            white-space: pre-wrap;
+        }
+
+        .register-section {
+            position: sticky;
+            top: 100px;
+        }
+
+        .register-card {
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            border: 1px solid #e5e7eb;
+            text-align: center;
+        }
+
+        .register-icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+        }
+
+        .register-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .register-text {
+            color: #6b7280;
+            font-size: 14px;
+            margin-bottom: 24px;
+        }
+
+        .btn-register {
+            width: 100%;
+            padding: 14px;
+            background: #1a1a1a;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-register:hover {
+            background: #2d2d2d;
+            transform: translateY(-2px);
+        }
+
+        .btn-registered {
+            background: #059669;
+        }
+
+        .btn-registered:hover {
+            background: #047857;
+        }
+
+        .btn-unregister {
+            background: #dc2626;
+            margin-top: 12px;
+        }
+
+        .btn-unregister:hover {
+            background: #b91c1c;
+        }
+
+        .btn-disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+        }
+
+        .btn-disabled:hover {
+            background: #9ca3af;
+            transform: none;
+        }
+
+        .attendees-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .attendee-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: #f9fafb;
+            border-radius: 10px;
+        }
+
+        .attendee-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #1a1a1a;
+            color: white;
             display: flex;
             align-items: center;
             justify-content: center;
-            color: white;
-            font-size: 20px;
+            font-weight: 600;
+            object-fit: cover;
         }
 
-        .meta-info h4 {
+        .attendee-info {
+            flex: 1;
+        }
+
+        .attendee-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: #111827;
+        }
+
+        .attendee-time {
             font-size: 12px;
-            color: #718096;
-            font-weight: 500;
-            margin-bottom: 4px;
-        }
-
-        .meta-info p {
-            font-size: 15px;
-            color: #1a202c;
-            font-weight: 600;
-        }
-
-        .event-description {
-            margin-bottom: 30px;
-        }
-
-        .event-description h3 {
-            font-size: 20px;
-            font-weight: 700;
-            color: #1a202c;
-            margin-bottom: 15px;
-        }
-
-        .event-description p {
-            font-size: 16px;
-            line-height: 1.8;
-            color: #4a5568;
-        }
-
-        .action-section {
-            display: flex;
-            gap: 15px;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-
-        .register-btn, .unregister-btn {
-            padding: 15px 40px;
-            border: none;
-            border-radius: 12px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-
-        .register-btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }
-
-        .register-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
-        }
-
-        .unregister-btn {
-            background: #f56565;
-            color: white;
-        }
-
-        .unregister-btn:hover {
-            background: #e53e3e;
-            transform: translateY(-2px);
-        }
-
-        .registered-badge {
-            padding: 12px 24px;
-            background: #48bb78;
-            color: white;
-            border-radius: 12px;
-            font-weight: 600;
-            display: inline-block;
+            color: #6b7280;
         }
 
         .alert {
-            padding: 15px 20px;
-            border-radius: 12px;
+            padding: 14px 18px;
+            border-radius: 10px;
             margin-bottom: 20px;
-            font-weight: 500;
+            font-size: 14px;
         }
 
         .alert-success {
-            background: #c6f6d5;
-            color: #22543d;
-            border-left: 4px solid #48bb78;
+            background: #ecfdf5;
+            color: #065f46;
+        }
+
+        .alert-danger {
+            background: #fef2f2;
+            color: #991b1b;
         }
 
         .alert-info {
-            background: #bee3f8;
-            color: #2c5282;
-            border-left: 4px solid #4299e1;
+            background: #f0f9ff;
+            color: #075985;
         }
 
-        @media (max-width: 768px) {
-            .event-header {
-                height: 250px;
+        @media (max-width: 968px) {
+            .content-grid {
+                grid-template-columns: 1fr;
             }
 
-            .event-body {
-                padding: 20px;
+            .register-section {
+                position: static;
             }
 
             .event-title {
-                font-size: 24px;
+                font-size: 28px;
             }
 
-            .event-meta {
-                grid-template-columns: 1fr;
+            .navbar {
+                padding: 16px 24px;
+            }
+
+            .main-container {
+                padding: 24px;
             }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <a href="view-events.php" class="back-btn">← Back to Events</a>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="view-events.php" class="back-btn">← Back to Events</a>
+            <div class="logo-area">
+                <img src="../assets/images/logo.png" alt="Logo" class="logo-img">
+                <span class="brand-name">Event Details</span>
+            </div>
+        </div>
+    </nav>
 
-        <?php if(isset($_GET['success'])): ?>
-            <div class="alert alert-success">✅ Successfully registered for this event!</div>
-        <?php endif; ?>
+    <div class="main-container">
+        <?php display_message(); ?>
 
-        <?php if(isset($_GET['unregistered'])): ?>
-            <div class="alert alert-info">ℹ️ You have been unregistered from this event.</div>
-        <?php endif; ?>
+        <div class="event-header">
+            <img src="../assets/images/<?php echo htmlspecialchars($event['event_image']); ?>" 
+                 alt="Event" class="event-hero"
+                 onerror="this.style.display='block'">
+        </div>
 
-        <div class="event-card">
-            <div class="event-header">
-                <?php if($event['event_image']): ?>
-                    <img src="../uploads/events/<?php echo htmlspecialchars($event['event_image']); ?>" alt="Event" class="event-image">
+        <div class="event-content">
+            <div class="event-meta-top">
+                <?php if ($event['event_category']): ?>
+                    <span class="badge badge-category"><?php echo htmlspecialchars($event['event_category']); ?></span>
                 <?php endif; ?>
-                <div class="event-badge"><?php echo htmlspecialchars($event['category']); ?></div>
+                
+                <?php if ($event['user_registered']): ?>
+                    <span class="badge badge-status">✓ You're registered</span>
+                <?php endif; ?>
+                
+                <?php if ($is_full): ?>
+                    <span class="badge badge-full">Event Full</span>
+                <?php endif; ?>
             </div>
 
-            <div class="event-body">
-                <h1 class="event-title"><?php echo htmlspecialchars($event['title']); ?></h1>
+            <h1 class="event-title"><?php echo htmlspecialchars($event['event_title']); ?></h1>
 
-                <div class="event-meta">
-                    <div class="meta-item">
-                        <div class="meta-icon">📅</div>
-                        <div class="meta-info">
-                            <h4>DATE</h4>
-                            <p><?php echo date('M d, Y', strtotime($event['event_date'])); ?></p>
-                        </div>
-                    </div>
-
-                    <div class="meta-item">
-                        <div class="meta-icon">⏰</div>
-                        <div class="meta-info">
-                            <h4>TIME</h4>
-                            <p><?php echo date('h:i A', strtotime($event['start_time'])); ?></p>
-                        </div>
-                    </div>
-
-                    <div class="meta-item">
-                        <div class="meta-icon">📍</div>
-                        <div class="meta-info">
-                            <h4>VENUE</h4>
-                            <p><?php echo htmlspecialchars($event['venue']); ?></p>
-                        </div>
-                    </div>
-
-                    <div class="meta-item">
-                        <div class="meta-icon">👥</div>
-                        <div class="meta-info">
-                            <h4>ATTENDEES</h4>
-                            <p><?php echo $event['registered_count']; ?> registered</p>
-                        </div>
+            <div class="event-meta-grid">
+                <div class="meta-item">
+                    <span class="meta-icon">📅</span>
+                    <div class="meta-text">
+                        <span class="meta-label">Date</span>
+                        <span class="meta-value"><?php echo format_date($event['event_date']); ?></span>
                     </div>
                 </div>
 
-                <div class="event-description">
-                    <h3>About This Event</h3>
-                    <p><?php echo nl2br(htmlspecialchars($event['description'])); ?></p>
+                <div class="meta-item">
+                    <span class="meta-icon">⏰</span>
+                    <div class="meta-text">
+                        <span class="meta-label">Time</span>
+                        <span class="meta-value"><?php echo date('g:i A', strtotime($event['event_time'])); ?></span>
+                    </div>
                 </div>
 
-                <div class="action-section">
-                    <?php if($event['is_registered']): ?>
-                        <span class="registered-badge">✓ You're Registered</span>
-                        <form method="POST" style="display: inline;">
-                            <button type="submit" name="unregister" class="unregister-btn" onclick="return confirm('Are you sure you want to unregister?')">Unregister</button>
+                <div class="meta-item">
+                    <span class="meta-icon">📍</span>
+                    <div class="meta-text">
+                        <span class="meta-label">Venue</span>
+                        <span class="meta-value"><?php echo htmlspecialchars($event['event_venue']); ?></span>
+                    </div>
+                </div>
+
+                <div class="meta-item">
+                    <span class="meta-icon">👥</span>
+                    <div class="meta-text">
+                        <span class="meta-label">Attendees</span>
+                        <span class="meta-value">
+                            <?php echo $event['registered_count']; ?>
+                            <?php if ($event['max_participants']): ?>
+                                / <?php echo $event['max_participants']; ?>
+                            <?php endif; ?>
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="content-grid">
+            <!-- Left Column -->
+            <div>
+                <div class="card">
+                    <h2 class="card-title">About This Event</h2>
+                    <div class="description">
+                        <?php echo nl2br(htmlspecialchars($event['event_description'])); ?>
+                    </div>
+                </div>
+
+                <?php if ($attendees->num_rows > 0): ?>
+                    <div class="card" style="margin-top: 24px;">
+                        <h2 class="card-title">Attendees (<?php echo $event['registered_count']; ?>)</h2>
+                        <div class="attendees-list">
+                            <?php while ($attendee = $attendees->fetch_assoc()): ?>
+                                <div class="attendee-item">
+                                    <?php 
+                                    $att_pic_path = '../assets/images/profiles/' . $attendee['profile_picture'];
+                                    $att_has_pic = $attendee['profile_picture'] != 'default.jpg' && file_exists($att_pic_path);
+                                    ?>
+                                    <?php if ($att_has_pic): ?>
+                                        <img src="<?php echo $att_pic_path; ?>" alt="Profile" class="attendee-avatar">
+                                    <?php else: ?>
+                                        <div class="attendee-avatar">
+                                            <?php echo strtoupper(substr($attendee['first_name'], 0, 1)); ?>
+                                        </div>
+                                    <?php endif; ?>
+                                    
+                                    <div class="attendee-info">
+                                        <div class="attendee-name">
+                                            <?php echo htmlspecialchars($attendee['first_name'] . ' ' . $attendee['last_name']); ?>
+                                        </div>
+                                        <div class="attendee-time">
+                                            Registered <?php echo time_ago($attendee['registration_date']); ?>
+                                        </div>
+                                    </div>
+                                </div>
+                            <?php endwhile; ?>
+                        </div>
+                    </div>
+                <?php endif; ?>
+            </div>
+
+            <!-- Right Column - Registration -->
+            <div class="register-section">
+                <div class="register-card">
+                    <?php if ($event['user_registered']): ?>
+                        <div class="register-icon">✅</div>
+                        <h3 class="register-title">You're Registered!</h3>
+                        <p class="register-text">You're all set for this event. See you there!</p>
+                        
+                        <form method="POST">
+                            <button type="submit" name="unregister" class="btn-register btn-unregister">
+                                Unregister
+                            </button>
                         </form>
+                    <?php elseif (!$registration_open): ?>
+                        <div class="register-icon">🔒</div>
+                        <h3 class="register-title">Registration Closed</h3>
+                        <p class="register-text">Registration for this event is no longer available.</p>
+                        <button class="btn-register btn-disabled" disabled>Registration Closed</button>
+                    <?php elseif ($is_full): ?>
+                        <div class="register-icon">😔</div>
+                        <h3 class="register-title">Event Full</h3>
+                        <p class="register-text">This event has reached maximum capacity.</p>
+                        <button class="btn-register btn-disabled" disabled>Event Full</button>
                     <?php else: ?>
-                        <form method="POST" style="display: inline;">
-                            <button type="submit" name="register" class="register-btn">Register for Event</button>
+                        <div class="register-icon">🎉</div>
+                        <h3 class="register-title">Join This Event</h3>
+                        <p class="register-text">Register now to secure your spot at this event!</p>
+                        
+                        <form method="POST">
+                            <button type="submit" name="register" class="btn-register">
+                                Register Now
+                            </button>
                         </form>
+                    <?php endif; ?>
+
+                    <?php if ($event['registration_deadline']): ?>
+                        <p style="margin-top: 16px; font-size: 12px; color: #6b7280;">
+                            Registration deadline: <?php echo format_datetime($event['registration_deadline']); ?>
+                        </p>
                     <?php endif; ?>
                 </div>
             </div>
