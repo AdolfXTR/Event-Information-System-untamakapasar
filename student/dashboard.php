@@ -1,25 +1,31 @@
 <?php
-// Start session first!
 session_start();
-
 require_once '../config/database.php';
 require_once '../includes/functions.php';
 
-// Check if user is logged in and is a student
-if (!is_logged_in()) {
+if (!is_logged_in() || !is_student()) {
     header("Location: ../auth/login.php");
     exit();
 }
 
-if (!is_student()) {
-    header("Location: ../auth/login.php");
-    exit();
-}
-
-// Get student info
 $user_id = $_SESSION['user_id'];
 $first_name = $_SESSION['first_name'];
 $last_name = $_SESSION['last_name'];
+
+// ✅ Get user profile picture safely
+$user_query = "SELECT profile_picture FROM users WHERE user_id = ?";
+$stmt = $conn->prepare($user_query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+$user_data = $result->fetch_assoc();
+
+$has_custom_pic = isset($user_data['profile_picture']) && !empty($user_data['profile_picture']);
+$profile_pic_path = $has_custom_pic
+    ? "../assets/images/profiles/" . htmlspecialchars($user_data['profile_picture'])
+    : "../assets/images/default.jpg";
+
+$stmt->close();
 
 // Get statistics
 $total_events_query = "SELECT COUNT(*) as total FROM events WHERE is_published = 1 AND event_date >= CURDATE()";
@@ -37,13 +43,19 @@ $announcements_query = "SELECT COUNT(*) as total FROM announcements WHERE is_pub
 $announcements_result = $conn->query($announcements_query);
 $total_announcements = $announcements_result->fetch_assoc()['total'];
 
-// Get upcoming events (limit 6)
-$upcoming_events_query = "SELECT * FROM events 
+// Get upcoming events
+$upcoming_events_query = "SELECT e.*, 
+                         (SELECT COUNT(*) FROM event_registrations WHERE event_id = e.event_id) as registered_count,
+                         (SELECT COUNT(*) FROM event_registrations WHERE event_id = e.event_id AND user_id = ?) as user_registered
+                         FROM events e
                          WHERE is_published = 1 AND event_date >= CURDATE() 
                          ORDER BY event_date ASC LIMIT 6";
-$upcoming_events = $conn->query($upcoming_events_query);
+$stmt = $conn->prepare($upcoming_events_query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$upcoming_events = $stmt->get_result();
 
-// Get recent announcements (limit 3)
+// Get recent announcements
 $recent_announcements_query = "SELECT a.*, u.first_name, u.last_name 
                               FROM announcements a 
                               JOIN users u ON a.created_by = u.user_id 
@@ -56,7 +68,7 @@ $recent_announcements = $conn->query($recent_announcements_query);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Student Dashboard - SAO Events</title>
+    <title>Dashboard - Event Information System</title>
     <style>
         * {
             margin: 0;
@@ -65,444 +77,312 @@ $recent_announcements = $conn->query($recent_announcements_query);
         }
 
         body {
-            font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
-            background: #f8f9fa;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+            background: #ffffff;
+            color: #1a1a1a;
+            line-height: 1.6;
         }
 
-        /* Top Header Bar */
-        .top-header {
-            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
-            color: white;
+        /* Top Navigation */
+        .navbar {
+            background: #ffffff;
+            border-bottom: 1px solid #e5e7eb;
             padding: 0;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             position: sticky;
             top: 0;
             z-index: 1000;
+            backdrop-filter: blur(8px);
         }
 
-        .header-container {
-            max-width: 100%;
+        .nav-container {
+            max-width: 1440px;
+            margin: 0 auto;
+            padding: 16px 48px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 15px 30px;
         }
 
-        .logo-section {
+        .logo-area {
             display: flex;
             align-items: center;
-            gap: 20px;
+            gap: 16px;
         }
 
-        .school-logo {
-            width: 70px;
-            height: 70px;
-            background: white;
-            border-radius: 12px;
-            padding: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        .logo-img {
+            width: 42px;
+            height: 42px;
             object-fit: contain;
         }
 
-        .school-title {
+        .brand-name {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1a1a1a;
+            letter-spacing: -0.3px;
+        }
+
+        .nav-links {
             display: flex;
-            flex-direction: column;
+            gap: 8px;
         }
 
-        .school-title h1 {
-            font-size: 1.5rem;
-            font-weight: 700;
-            margin-bottom: 2px;
-            letter-spacing: -0.5px;
+        .nav-link {
+            padding: 8px 16px;
+            color: #6b7280;
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            border-radius: 6px;
+            transition: all 0.2s;
         }
 
-        .school-title p {
-            font-size: 0.85rem;
-            opacity: 0.95;
-            font-weight: 400;
+        .nav-link:hover {
+            background: #f3f4f6;
+            color: #1a1a1a;
+        }
+
+        .nav-link.active {
+            color: #1a1a1a;
+            background: #f3f4f6;
         }
 
         .user-section {
             display: flex;
             align-items: center;
-            gap: 15px;
-        }
-
-        .user-avatar-top {
-            width: 45px;
-            height: 45px;
-            border-radius: 50%;
-            background: white;
-            color: #1e3a8a;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 700;
-            font-size: 1.1rem;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }
-
-        .user-info-top {
-            text-align: right;
-        }
-
-        .user-info-top h3 {
-            font-size: 0.95rem;
-            font-weight: 600;
-            margin-bottom: 2px;
-        }
-
-        .user-info-top p {
-            font-size: 0.8rem;
-            opacity: 0.9;
-        }
-
-        .dashboard-container {
-            display: flex;
-            min-height: calc(100vh - 100px);
-            max-width: 100%;
-        }
-
-        /* Sidebar */
-        .sidebar {
-            width: 280px;
-            background: white;
-            position: sticky;
-            top: 100px;
-            height: calc(100vh - 100px);
-            overflow-y: auto;
-            box-shadow: 2px 0 10px rgba(0,0,0,0.05);
-            border-right: 1px solid #e5e7eb;
-        }
-
-        .sidebar-content {
-            padding: 25px 0;
-        }
-
-        .nav-section-title {
-            padding: 0 25px;
-            font-size: 0.75rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            color: #6b7280;
-            margin-bottom: 10px;
-            letter-spacing: 0.5px;
-        }
-
-        .nav-menu {
-            padding: 0;
-        }
-
-        .nav-item {
-            padding: 14px 25px;
-            color: #4b5563;
-            text-decoration: none;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            transition: all 0.2s;
+            gap: 16px;
+            padding: 8px 16px;
+            border-radius: 24px;
             cursor: pointer;
-            font-weight: 500;
-            font-size: 0.95rem;
-            border-left: 3px solid transparent;
+            transition: background 0.2s;
         }
 
-        .nav-item:hover {
+        .user-section:hover {
             background: #f3f4f6;
-            color: #1e3a8a;
-            border-left-color: #3b82f6;
         }
 
-        .nav-item.active {
-            background: #eff6ff;
-            color: #1e3a8a;
-            border-left-color: #1e3a8a;
-            font-weight: 600;
-        }
-
-        .nav-item span:first-child {
-            font-size: 1.3rem;
-        }
-
-        .logout-section {
-            padding: 20px 25px;
-            border-top: 1px solid #e5e7eb;
-            margin-top: 20px;
-        }
-
-        .logout-btn {
-            width: 100%;
-            padding: 12px;
-            background: #fee2e2;
-            color: #dc2626;
-            text-align: center;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s;
-            text-decoration: none;
+        .avatar {
+            width: 48px; /* Increased size */
+            height: 48px; /* Increased size */
+            border-radius: 50%;
+            background: #1a1a1a;
+            color: white;
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 8px;
+            font-size: 18px; /* Adjusted size for larger avatar */
             font-weight: 600;
-            border: 1px solid #fecaca;
+            object-fit: cover;
         }
 
-        .logout-btn:hover {
-            background: #dc2626;
-            color: white;
+        .user-name {
+            font-size: 16px; /* Slightly larger text */
+            font-weight: 500;
+            color: #1a1a1a;
         }
 
         /* Main Content */
-        .main-content {
-            flex: 1;
-            padding: 30px 40px;
-            background: #f8f9fa;
-        }
-
-        .breadcrumb {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 0.85rem;
-            color: #6b7280;
-            margin-bottom: 20px;
-        }
-
-        .breadcrumb a {
-            color: #3b82f6;
-            text-decoration: none;
+        .main-wrapper {
+            max-width: 1440px;
+            margin: 0 auto;
+            padding: 48px 48px 80px;
         }
 
         .page-header {
-            margin-bottom: 30px;
+            margin-bottom: 40px;
         }
 
-        .page-header h1 {
-            font-size: 2rem;
-            color: #111827;
-            font-weight: 700;
+        .greeting {
+            font-size: 32px;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+        }
+
+        .subtext {
+            font-size: 15px;
+            color: #6b7280;
+        }
+
+        /* Stats Grid */
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+            margin-bottom: 48px;
+        }
+
+        .metric-card {
+            background: #fafafa;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 24px;
+            transition: all 0.2s;
+        }
+
+        .metric-card:hover {
+            border-color: #d1d5db;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+
+        .metric-label {
+            font-size: 13px;
+            color: #6b7280;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
             margin-bottom: 8px;
         }
 
-        .page-header p {
-            color: #6b7280;
-            font-size: 0.95rem;
+        .metric-value {
+            font-size: 36px;
+            font-weight: 600;
+            color: #1a1a1a;
+            line-height: 1;
         }
 
-        /* Stats Cards */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 20px;
-            margin-bottom: 35px;
-        }
-
-        .stat-card {
-            background: white;
-            padding: 25px;
-            border-radius: 12px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-            border: 1px solid #e5e7eb;
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            transition: all 0.3s;
-        }
-
-        .stat-card:hover {
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            transform: translateY(-2px);
-        }
-
-        .stat-icon {
-            width: 65px;
-            height: 65px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 2rem;
-        }
-
-        .stat-icon.blue {
-            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
-        }
-
-        .stat-icon.green {
-            background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
-        }
-
-        .stat-icon.orange {
-            background: linear-gradient(135deg, #fed7aa 0%, #fdba74 100%);
-        }
-
-        .stat-info h3 {
-            font-size: 2.2rem;
-            color: #111827;
-            margin-bottom: 5px;
-            font-weight: 700;
-        }
-
-        .stat-info p {
-            color: #6b7280;
-            font-size: 0.9rem;
-            font-weight: 500;
-        }
-
-        /* Section */
-        .content-section {
-            background: white;
-            border-radius: 12px;
-            padding: 25px;
-            margin-bottom: 25px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-            border: 1px solid #e5e7eb;
-        }
-
+        /* Section Headers */
         .section-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 25px;
-            padding-bottom: 15px;
-            border-bottom: 2px solid #f3f4f6;
+            margin-bottom: 24px;
         }
 
         .section-title {
-            font-size: 1.4rem;
-            color: #111827;
-            font-weight: 700;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .view-all-link {
-            color: #3b82f6;
-            text-decoration: none;
+            font-size: 20px;
             font-weight: 600;
-            font-size: 0.9rem;
-            transition: color 0.3s;
+            color: #1a1a1a;
+            letter-spacing: -0.3px;
         }
 
-        .view-all-link:hover {
-            color: #1e3a8a;
+        .link-text {
+            font-size: 14px;
+            color: #6b7280;
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .link-text:hover {
+            color: #1a1a1a;
         }
 
         /* Events Grid */
         .events-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-            gap: 20px;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+            margin-bottom: 56px;
         }
 
-        .event-card {
-            background: white;
+        .event-item {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
             border-radius: 12px;
             overflow: hidden;
-            border: 1px solid #e5e7eb;
-            transition: all 0.3s;
+            transition: all 0.2s;
+            cursor: pointer;
         }
 
-        .event-card:hover {
-            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
-            transform: translateY(-4px);
+        .event-item:hover {
+            border-color: #d1d5db;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+            transform: translateY(-2px);
         }
 
-        .event-image {
+        .event-img {
             width: 100%;
-            height: 190px;
+            height: 180px;
             object-fit: cover;
-            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+            background: #f3f4f6;
         }
 
         .event-content {
             padding: 20px;
         }
 
-        .event-date {
-            display: inline-flex;
+        .event-meta {
+            display: flex;
             align-items: center;
-            gap: 5px;
-            background: #dbeafe;
-            color: #1e40af;
-            padding: 6px 14px;
-            border-radius: 20px;
-            font-size: 0.8rem;
-            font-weight: 600;
+            gap: 12px;
             margin-bottom: 12px;
+            font-size: 13px;
+            color: #6b7280;
         }
 
         .event-title {
-            font-size: 1.15rem;
-            color: #111827;
-            margin-bottom: 10px;
-            font-weight: 700;
+            font-size: 16px;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 8px;
             line-height: 1.4;
         }
 
-        .event-venue {
+        .event-location {
+            font-size: 14px;
             color: #6b7280;
-            font-size: 0.9rem;
-            margin-bottom: 18px;
+            margin-bottom: 16px;
+        }
+
+        .event-footer {
             display: flex;
+            justify-content: space-between;
             align-items: center;
-            gap: 6px;
+            padding-top: 16px;
+            border-top: 1px solid #f3f4f6;
         }
 
-        .event-actions {
-            display: flex;
-            gap: 10px;
+        .attendee-count {
+            font-size: 13px;
+            color: #6b7280;
         }
 
-        .btn {
-            padding: 10px 20px;
+        .btn-details {
+            padding: 6px 14px;
+            background: #1a1a1a;
+            color: white;
             border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: 600;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
             text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-            transition: all 0.3s;
-            font-size: 0.9rem;
+            transition: all 0.2s;
         }
 
-        .btn-primary {
-            background: #1e3a8a;
-            color: white;
+        .btn-details:hover {
+            background: #2d2d2d;
         }
 
-        .btn-primary:hover {
-            background: #1e40af;
-            box-shadow: 0 4px 12px rgba(30, 58, 138, 0.3);
+        .btn-registered {
+            background: #059669;
         }
 
-        .btn-outline {
-            background: white;
-            color: #1e3a8a;
-            border: 2px solid #1e3a8a;
-        }
-
-        .btn-outline:hover {
-            background: #1e3a8a;
-            color: white;
+        .btn-registered:hover {
+            background: #047857;
         }
 
         /* Announcements */
+        .announcements-list {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
         .announcement-item {
+            background: #fafafa;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
             padding: 20px;
-            border-bottom: 1px solid #f3f4f6;
+            transition: all 0.2s;
         }
 
-        .announcement-item:last-child {
-            border-bottom: none;
+        .announcement-item:hover {
+            border-color: #d1d5db;
         }
 
-        .announcement-header {
+        .announcement-top {
             display: flex;
             justify-content: space-between;
             align-items: start;
@@ -510,305 +390,259 @@ $recent_announcements = $conn->query($recent_announcements_query);
         }
 
         .announcement-title {
-            font-size: 1.1rem;
-            color: #111827;
-            font-weight: 700;
+            font-size: 16px;
+            font-weight: 600;
+            color: #1a1a1a;
         }
 
-        .announcement-badge {
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 700;
+        .badge {
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
             text-transform: uppercase;
+            letter-spacing: 0.3px;
         }
 
         .badge-urgent {
-            background: #fee2e2;
-            color: #dc2626;
+            background: #fef2f2;
+            color: #991b1b;
         }
 
         .badge-general {
-            background: #dbeafe;
-            color: #1e40af;
+            background: #f0f9ff;
+            color: #075985;
         }
 
         .badge-reminder {
             background: #fef3c7;
-            color: #d97706;
+            color: #92400e;
         }
 
-        .announcement-content {
+        .announcement-text {
+            font-size: 14px;
             color: #4b5563;
-            font-size: 0.95rem;
-            line-height: 1.7;
+            line-height: 1.6;
             margin-bottom: 12px;
         }
 
-        .announcement-footer {
-            font-size: 0.85rem;
+        .announcement-meta {
+            font-size: 12px;
             color: #9ca3af;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+            color: #9ca3af;
+        }
+
+        .empty-state h3 {
+            font-size: 18px;
+            color: #6b7280;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .empty-state p {
+            font-size: 14px;
+        }
+
+        /* Logout Button */
+        .logout-btn {
+            position: fixed;
+            bottom: 32px;
+            right: 32px;
+            padding: 10px 20px;
+            background: #1a1a1a;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            transition: all 0.2s;
             display: flex;
             align-items: center;
             gap: 8px;
         }
 
-        .no-data {
-            text-align: center;
-            padding: 60px 20px;
-            color: #9ca3af;
-        }
-
-        .no-data h3 {
-            font-size: 1.3rem;
-            margin-bottom: 8px;
-            color: #6b7280;
+        .logout-btn:hover {
+            background: #2d2d2d;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.2);
         }
 
         @media (max-width: 1024px) {
-            .sidebar {
-                width: 240px;
+            .events-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .metrics {
+                grid-template-columns: repeat(3, 1fr);
             }
         }
 
         @media (max-width: 768px) {
-            .header-container {
-                flex-direction: column;
-                gap: 15px;
-                text-align: center;
+            .nav-container {
+                padding: 16px 24px;
             }
 
-            .logo-section {
-                flex-direction: column;
-                gap: 10px;
+            .main-wrapper {
+                padding: 32px 24px;
             }
 
-            .school-title h1 {
-                font-size: 1.2rem;
-            }
-
-            .sidebar {
-                width: 100%;
-                position: relative;
-                height: auto;
-            }
-
-            .main-content {
-                padding: 20px;
-            }
-
-            .stats-grid {
-                grid-template-columns: 1fr;
+            .nav-links {
+                display: none;
             }
 
             .events-grid {
                 grid-template-columns: 1fr;
             }
+
+            .metrics {
+                grid-template-columns: 1fr;
+            }
+
+            .greeting {
+                font-size: 24px;
+            }
         }
     </style>
 </head>
 <body>
-    <!-- Top Header Bar with Logo -->
-    <header class="top-header">
-        <div class="header-container">
-            <div class="logo-section">
-                <img src="../assets/images/logo.png" alt="School Logo" class="school-logo">
-                <div class="school-title">
-                    <h1>Event Information System</h1>
-                    <p>Student Affairs Office</p>
-                </div>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="logo-area">
+                <img src="../assets/images/logo.png" alt="Logo" class="logo-img">
+                <span class="brand-name">Event Information System</span>
             </div>
-            <div class="user-section">
-                <div class="user-info-top">
-                    <h3><?php echo htmlspecialchars($first_name . ' ' . $last_name); ?></h3>
-                    <p>Student Account</p>
-                </div>
-                <div class="user-avatar-top">
-                    <?php echo strtoupper(substr($first_name, 0, 1)); ?>
-                </div>
+
+            <div class="nav-links">
+                <a href="dashboard.php" class="nav-link active">Dashboard</a>
+                <a href="view-events.php" class="nav-link">Events</a>
+                <a href="my-events.php" class="nav-link">My Events</a>
+                <a href="announcements.php" class="nav-link">Announcements</a>
+            </div>
+
+            <div class="user-section" onclick="window.location.href='profile.php'">
+                <?php if ($has_custom_pic): ?>
+                    <img src="<?php echo $profile_pic_path; ?>" alt="Profile" class="avatar" style="object-fit: cover;">
+                <?php else: ?>
+                    <div class="avatar">
+                        <?php echo strtoupper(substr($first_name, 0, 1)); ?>
+                    </div>
+                <?php endif; ?>
+                <span class="user-name"><?php echo htmlspecialchars($first_name . ' ' . $last_name); ?></span>
             </div>
         </div>
-    </header>
+    </nav>
 
-    <div class="dashboard-container">
-        <!-- Sidebar Navigation -->
-        <aside class="sidebar">
-            <div class="sidebar-content">
-                <p class="nav-section-title">Navigation</p>
-                <nav class="nav-menu">
-                    <a href="dashboard.php" class="nav-item active">
-                        <span>🏠</span>
-                        <span>Dashboard</span>
-                    </a>
-                    <a href="view-events.php" class="nav-item">
-                        <span>📅</span>
-                        <span>Browse Events</span>
-                    </a>
-                    <a href="my-events.php" class="nav-item">
-                        <span>✅</span>
-                        <span>My Registered Events</span>
-                    </a>
-                    <a href="announcements.php" class="nav-item">
-                        <span>📢</span>
-                        <span>Announcements</span>
-                    </a>
-                    <a href="profile.php" class="nav-item">
-                        <span>👤</span>
-                        <span>My Profile</span>
-                    </a>
-                </nav>
+    <!-- Main Content -->
+    <main class="main-wrapper">
+        <div class="page-header">
+            <h1 class="greeting">Good <?php echo (date('H') < 12) ? 'morning' : ((date('H') < 18) ? 'afternoon' : 'evening'); ?>, <?php echo htmlspecialchars($first_name); ?></h1>
+            <p class="subtext"><?php echo date('l, F j, Y'); ?></p>
+        </div>
 
-                <div class="logout-section">
-                    <a href="../auth/logout.php" class="logout-btn">
-                        <span>🚪</span>
-                        <span>Logout</span>
-                    </a>
-                </div>
+        <?php display_message(); ?>
+
+        <!-- Metrics -->
+        <div class="metrics">
+            <div class="metric-card">
+                <div class="metric-label">Upcoming Events</div>
+                <div class="metric-value"><?php echo $total_events; ?></div>
             </div>
-        </aside>
-
-        <!-- Main Content Area -->
-        <main class="main-content">
-            <div class="breadcrumb">
-                <a href="dashboard.php">Home</a>
-                <span>/</span>
-                <span>Dashboard</span>
+            <div class="metric-card">
+                <div class="metric-label">Registered</div>
+                <div class="metric-value"><?php echo $registered_events; ?></div>
             </div>
-
-            <div class="page-header">
-                <h1>Welcome back, <?php echo htmlspecialchars($first_name); ?>! 👋</h1>
-                <p><?php echo date('l, F j, Y'); ?> • Here's what's happening with your events today</p>
+            <div class="metric-card">
+                <div class="metric-label">Announcements</div>
+                <div class="metric-value"><?php echo $total_announcements; ?></div>
             </div>
+        </div>
 
-            <?php display_message(); ?>-item">
-                    <span>📢</span>
-                    <span>Announcements</span>
-                </a>
-                <a href="profile.php" class="nav-item">
-                    <span>👤</span>
-                    <span>Profile</span>
-                </a>
-            </nav>
+        <!-- Events Section -->
+        <div class="section-header">
+            <h2 class="section-title">Upcoming Events</h2>
+            <a href="view-events.php" class="link-text">View all →</a>
+        </div>
 
-            <a href="../auth/logout.php" class="logout-btn">
-                🚪 Logout
-            </a>
-        </aside>
-
-        <!-- Main Content -->
-        <main class="main-content">
-            <div class="top-bar">
-                <div>
-                    <h1>Welcome back, <?php echo htmlspecialchars($first_name); ?>! 👋</h1>
-                    <p class="welcome-text"><?php echo date('l, F j, Y'); ?></p>
-                </div>
-            </div>
-
-            <?php display_message(); ?>
-
-            <!-- Stats Cards -->
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-icon purple">
-                        📅
-                    </div>
-                    <div class="stat-info">
-                        <h3><?php echo $total_events; ?></h3>
-                        <p>Upcoming Events</p>
-                    </div>
-                </div>
-
-                <div class="stat-card">
-                    <div class="stat-icon green">
-                        ✅
-                    </div>
-                    <div class="stat-info">
-                        <h3><?php echo $registered_events; ?></h3>
-                        <p>Registered Events</p>
-                    </div>
-                </div>
-
-                <div class="stat-card">
-                    <div class="stat-icon orange">
-                        📢
-                    </div>
-                    <div class="stat-info">
-                        <h3><?php echo $total_announcements; ?></h3>
-                        <p>Announcements</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Upcoming Events -->
-            <h2 class="section-title">🔥 Upcoming Events</h2>
-            
-            <?php if ($upcoming_events->num_rows > 0): ?>
-                <div class="events-grid">
-                    <?php while ($event = $upcoming_events->fetch_assoc()): ?>
-                        <div class="event-card">
-                            <img src="../assets/images/<?php echo htmlspecialchars($event['event_image']); ?>" 
-                                 alt="Event" class="event-image" 
-                                 onerror="this.style.background='linear-gradient(135deg, #667eea 0%, #764ba2 100%)'">
-                            <div class="event-content">
-                                <span class="event-date">
-                                    📅 <?php echo format_date($event['event_date']); ?>
-                                </span>
-                                <h3 class="event-title"><?php echo htmlspecialchars($event['event_title']); ?></h3>
-                                <p class="event-venue">
-                                    📍 <?php echo htmlspecialchars($event['event_venue']); ?>
-                                </p>
-                                <div class="event-actions">
-                                    <a href="event-details.php?id=<?php echo $event['event_id']; ?>" class="btn btn-primary">
-                                        View Details
-                                    </a>
-                                </div>
+        <?php if ($upcoming_events->num_rows > 0): ?>
+            <div class="events-grid">
+                <?php while ($event = $upcoming_events->fetch_assoc()): ?>
+                    <div class="event-item" onclick="window.location.href='event-details.php?id=<?php echo $event['event_id']; ?>'">
+                        <img src="../assets/images/<?php echo htmlspecialchars($event['event_image']); ?>" 
+                             alt="Event" class="event-img"
+                             onerror="this.style.display='block'">
+                        <div class="event-content">
+                            <div class="event-meta">
+                                <span><?php echo format_date($event['event_date']); ?></span>
+                                <span>•</span>
+                                <span><?php echo date('g:i A', strtotime($event['event_time'])); ?></span>
+                            </div>
+                            <h3 class="event-title"><?php echo htmlspecialchars($event['event_title']); ?></h3>
+                            <p class="event-location"><?php echo htmlspecialchars($event['event_venue']); ?></p>
+                            <div class="event-footer">
+                                <span class="attendee-count"><?php echo $event['registered_count']; ?> attending</span>
+                                <a href="event-details.php?id=<?php echo $event['event_id']; ?>" 
+                                   class="btn-details <?php echo $event['user_registered'] ? 'btn-registered' : ''; ?>"
+                                   onclick="event.stopPropagation()">
+                                    <?php echo $event['user_registered'] ? 'Registered' : 'View Details'; ?>
+                                </a>
                             </div>
                         </div>
-                    <?php endwhile; ?>
-                </div>
-                <div style="text-align: center; margin-top: 20px;">
-                    <a href="view-events.php" class="btn btn-secondary" style="padding: 12px 30px;">
-                        View All Events →
-                    </a>
-                </div>
-            <?php else: ?>
-                <div class="no-data">
-                    <h3>📅 No upcoming events at the moment</h3>
-                    <p>Check back later for new events!</p>
-                </div>
-            <?php endif; ?>
+                    </div>
+                <?php endwhile; ?>
+            </div>
+        <?php else: ?>
+            <div class="empty-state">
+                <h3>No upcoming events</h3>
+                <p>Stay tuned for upcoming announcements!</p>
+            </div>
+        <?php endif; ?>
 
-            <!-- Recent Announcements -->
-            <h2 class="section-title" style="margin-top: 40px;">📢 Recent Announcements</h2>
-            
-            <?php if ($recent_announcements->num_rows > 0): ?>
-                <div class="announcements-list">
-                    <?php while ($announcement = $recent_announcements->fetch_assoc()): ?>
-                        <div class="announcement-item">
-                            <div class="announcement-header">
-                                <h3 class="announcement-title"><?php echo htmlspecialchars($announcement['title']); ?></h3>
-                                <span class="announcement-badge badge-<?php echo $announcement['announcement_type']; ?>">
-                                    <?php echo ucfirst($announcement['announcement_type']); ?>
-                                </span>
-                            </div>
-                            <p class="announcement-content">
-                                <?php echo nl2br(htmlspecialchars(substr($announcement['content'], 0, 200))); ?>
-                                <?php if (strlen($announcement['content']) > 200) echo '...'; ?>
-                            </p>
-                            <div class="announcement-footer">
-                                Posted by <?php echo htmlspecialchars($announcement['first_name'] . ' ' . $announcement['last_name']); ?> 
-                                • <?php echo time_ago($announcement['created_at']); ?>
-                            </div>
+        <!-- Announcements Section -->
+        <div class="section-header">
+            <h2 class="section-title">Recent Announcements</h2>
+            <a href="announcements.php" class="link-text">View all →</a>
+        </div>
+
+        <?php if ($recent_announcements->num_rows > 0): ?>
+            <div class="announcements-list">
+                <?php while ($announcement = $recent_announcements->fetch_assoc()): ?>
+                    <div class="announcement-item">
+                        <div class="announcement-top">
+                            <h3 class="announcement-title"><?php echo htmlspecialchars($announcement['title']); ?></h3>
+                            <span class="badge 
+                                <?php 
+                                    echo match(strtolower($announcement['category'])) {
+                                        'urgent' => 'badge-urgent',
+                                        'reminder' => 'badge-reminder',
+                                        default => 'badge-general'
+                                    };
+                                ?>">
+                                <?php echo strtoupper($announcement['category']); ?>
+                            </span>
                         </div>
-                    <?php endwhile; ?>
-                </div>
-            <?php else: ?>
-                <div class="no-data">
-                    <h3>📢 No announcements yet</h3>
-                    <p>Stay tuned for updates!</p>
-                </div>
-            <?php endif; ?>
-        </main>
-    </div>
+                        <p class="announcement-text"><?php echo nl2br(htmlspecialchars(shorten_text($announcement['content'], 150))); ?></p>
+                        <div class="announcement-meta">
+                            Posted by <?php echo htmlspecialchars($announcement['first_name'] . ' ' . $announcement['last_name']); ?>
+                            • <?php echo time_ago($announcement['created_at']); ?>
+                        </div>
+                    </div>
+                <?php endwhile; ?>
+            </div>
+        <?php else: ?>
+            <div class="empty-state">
+                <h3>No announcements yet</h3>
+                <p>Check back later for updates.</p>
+            </div>
+        <?php endif; ?>
+    </main>
+
+    <a href="../auth/logout.php" class="logout-btn">🚪 Logout</a>
 </body>
 </html>
