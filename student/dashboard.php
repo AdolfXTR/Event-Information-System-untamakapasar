@@ -162,21 +162,21 @@ $recent_announcements = $conn->query($recent_announcements_query);
         }
 
         .avatar {
-            width: 48px; /* Increased size */
-            height: 48px; /* Increased size */
+            width: 48px;
+            height: 48px;
             border-radius: 50%;
             background: #1a1a1a;
             color: white;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 18px; /* Adjusted size for larger avatar */
+            font-size: 18px;
             font-weight: 600;
             object-fit: cover;
         }
 
         .user-name {
-            font-size: 16px; /* Slightly larger text */
+            font-size: 16px;
             font-weight: 500;
             color: #1a1a1a;
         }
@@ -363,78 +363,114 @@ $recent_announcements = $conn->query($recent_announcements_query);
             background: #047857;
         }
 
-        /* Announcements */
+        /* Announcements - Improved Design */
         .announcements-list {
             display: flex;
             flex-direction: column;
-            gap: 16px;
+            gap: 20px;
         }
 
         .announcement-item {
-            background: #fafafa;
+            background: #ffffff;
             border: 1px solid #e5e7eb;
-            border-radius: 12px;
-            padding: 20px;
-            transition: all 0.2s;
+            border-radius: 16px;
+            padding: 24px;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .announcement-item::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 4px;
+            background: #3b82f6;
+            opacity: 0;
+            transition: opacity 0.3s ease;
         }
 
         .announcement-item:hover {
             border-color: #d1d5db;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            transform: translateY(-2px);
+        }
+
+        .announcement-item:hover::before {
+            opacity: 1;
         }
 
         .announcement-top {
             display: flex;
             justify-content: space-between;
             align-items: start;
-            margin-bottom: 12px;
+            gap: 16px;
+            margin-bottom: 16px;
         }
 
         .announcement-title {
-            font-size: 16px;
+            font-size: 18px;
             font-weight: 600;
             color: #1a1a1a;
+            line-height: 1.4;
+            flex: 1;
         }
 
         .badge {
-            padding: 4px 10px;
-            border-radius: 6px;
+            padding: 6px 12px;
+            border-radius: 8px;
             font-size: 11px;
             font-weight: 600;
             text-transform: uppercase;
-            letter-spacing: 0.3px;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+            flex-shrink: 0;
         }
 
         .badge-urgent {
-            background: #fef2f2;
+            background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
             color: #991b1b;
+            border: 1px solid #fca5a5;
         }
 
         .badge-general {
-            background: #f0f9ff;
-            color: #075985;
+            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+            color: #1e40af;
+            border: 1px solid #93c5fd;
         }
 
         .badge-reminder {
-            background: #fef3c7;
+            background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
             color: #92400e;
+            border: 1px solid #fcd34d;
         }
 
         .announcement-text {
-            font-size: 14px;
+            font-size: 15px;
             color: #4b5563;
-            line-height: 1.6;
-            margin-bottom: 12px;
+            line-height: 1.7;
+            margin-bottom: 16px;
         }
 
         .announcement-meta {
-            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
             color: #9ca3af;
+            padding-top: 16px;
+            border-top: 1px solid #f3f4f6;
         }
 
         .empty-state {
             text-align: center;
             padding: 80px 20px;
             color: #9ca3af;
+            background: #fafafa;
+            border-radius: 16px;
+            border: 1px dashed #e5e7eb;
         }
 
         .empty-state h3 {
@@ -446,6 +482,7 @@ $recent_announcements = $conn->query($recent_announcements_query);
 
         .empty-state p {
             font-size: 14px;
+            color: #9ca3af;
         }
 
         /* Logout Button */
@@ -506,6 +543,20 @@ $recent_announcements = $conn->query($recent_announcements_query);
 
             .greeting {
                 font-size: 24px;
+            }
+
+            .announcement-item {
+                padding: 20px;
+            }
+
+            .announcement-top {
+                flex-direction: column;
+                align-items: start;
+                gap: 12px;
+            }
+
+            .badge {
+                align-self: flex-start;
             }
         }
     </style>
@@ -618,13 +669,14 @@ $recent_announcements = $conn->query($recent_announcements_query);
                             <h3 class="announcement-title"><?php echo htmlspecialchars($announcement['title']); ?></h3>
                             <span class="badge 
                                 <?php 
-                                    echo match(strtolower($announcement['category'])) {
+                                    $category = isset($announcement['category']) ? strtolower($announcement['category']) : 'general';
+                                    echo match($category) {
                                         'urgent' => 'badge-urgent',
                                         'reminder' => 'badge-reminder',
                                         default => 'badge-general'
                                     };
                                 ?>">
-                                <?php echo strtoupper($announcement['category']); ?>
+                                <?php echo isset($announcement['category']) ? strtoupper($announcement['category']) : 'GENERAL'; ?>
                             </span>
                         </div>
                         <p class="announcement-text"><?php echo nl2br(htmlspecialchars(shorten_text($announcement['content'], 150))); ?></p>
