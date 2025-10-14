@@ -24,7 +24,7 @@ $profile_pic = isset($user_data['profile_picture']) ? $user_data['profile_pictur
 $profile_pic_path = '../assets/images/profiles/' . $profile_pic;
 $has_custom_pic = $profile_pic != 'default.jpg' && file_exists($profile_pic_path);
 
-// Get all announcements
+// Get all announcements with images
 $announcements_query = "SELECT a.*, u.first_name as author_first, u.last_name as author_last 
                         FROM announcements a 
                         JOIN users u ON a.created_by = u.user_id 
@@ -115,6 +115,7 @@ $announcements = $conn->query($announcements_query);
             justify-content: center;
             font-weight: 700;
             cursor: pointer;
+            object-fit: cover;
         }
 
         .main-container {
@@ -146,11 +147,12 @@ $announcements = $conn->query($announcements_query);
             margin-bottom: 20px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             border-left: 4px solid #1e3a8a;
-            transition: transform 0.3s;
+            transition: transform 0.3s, box-shadow 0.3s;
         }
 
         .announcement-card:hover {
-            transform: translateX(5px);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         }
 
         .announcement-header {
@@ -174,6 +176,7 @@ $announcements = $conn->query($announcements_query);
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.5px;
+            white-space: nowrap;
         }
 
         .badge-urgent {
@@ -208,11 +211,38 @@ $announcements = $conn->query($announcements_query);
             gap: 6px;
         }
 
+        .announcement-image {
+            width: 100%;
+            margin: 20px 0;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .announcement-image img {
+            width: 100%;
+            height: auto;
+            display: block;
+            object-fit: cover;
+        }
+
         .announcement-content {
             color: #374151;
             font-size: 1.05rem;
-            line-height: 1.8;
+            line-height: 1.9;
             white-space: pre-wrap;
+            background: #f9fafb;
+            padding: 24px;
+            border-radius: 10px;
+            border-left: 3px solid #3b82f6;
+        }
+
+        .announcement-content strong {
+            color: #1e3a8a;
+            font-weight: 700;
+            display: block;
+            margin-bottom: 16px;
+            font-size: 1.15rem;
         }
 
         .no-announcements {
@@ -240,6 +270,15 @@ $announcements = $conn->query($announcements_query);
             .announcement-title {
                 font-size: 1.2rem;
             }
+
+            .announcement-header {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .announcement-badge {
+                align-self: flex-start;
+            }
         }
     </style>
 </head>
@@ -258,9 +297,13 @@ $announcements = $conn->query($announcements_query);
                 <a href="my-events.php">My Events</a>
                 <a href="announcements.php" class="active">Announcements</a>
             </nav>
-            <div class="user-avatar" onclick="window.location.href='profile.php'">
-                <?php echo strtoupper(substr($first_name, 0, 1)); ?>
-            </div>
+            <?php if ($has_custom_pic): ?>
+                <img src="<?php echo $profile_pic_path; ?>" alt="Profile" class="user-avatar" onclick="window.location.href='profile.php'" style="object-fit: cover;">
+            <?php else: ?>
+                <div class="user-avatar" onclick="window.location.href='profile.php'">
+                    <?php echo strtoupper(substr($first_name, 0, 1)); ?>
+                </div>
+            <?php endif; ?>
         </div>
     </header>
 
@@ -274,7 +317,7 @@ $announcements = $conn->query($announcements_query);
             <?php while ($announcement = $announcements->fetch_assoc()): ?>
                 <div class="announcement-card">
                     <div class="announcement-header">
-                        <div>
+                        <div style="flex: 1;">
                             <h2 class="announcement-title"><?php echo htmlspecialchars($announcement['title']); ?></h2>
                             <div class="announcement-meta">
                                 <div class="meta-item">
@@ -291,6 +334,13 @@ $announcements = $conn->query($announcements_query);
                             <?php echo ucfirst($announcement['announcement_type']); ?>
                         </span>
                     </div>
+
+                    <?php if (!empty($announcement['announcement_image'])): ?>
+                        <div class="announcement-image">
+                            <img src="../assets/images/announcements/<?php echo htmlspecialchars($announcement['announcement_image']); ?>" 
+                                 alt="<?php echo htmlspecialchars($announcement['title']); ?>">
+                        </div>
+                    <?php endif; ?>
 
                     <div class="announcement-content">
                         <?php echo nl2br(htmlspecialchars($announcement['content'])); ?>

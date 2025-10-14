@@ -11,6 +11,25 @@ if (!function_exists('sanitize_input')) {
     }
 }
 
+
+function shorten_text($text, $max_length = 150) {
+    if (strlen($text) <= $max_length) {
+        return $text;
+    }
+    
+    $text = substr($text, 0, $max_length);
+    $last_space = strrpos($text, ' ');
+    
+    if ($last_space !== false) {
+        $text = substr($text, 0, $last_space);
+    }
+    
+    return $text . '...';
+}
+
+
+
+
 // Validate email
 if (!function_exists('validate_email')) {
     function validate_email($email) {
@@ -162,13 +181,12 @@ if (!function_exists('upload_file')) {
     }
 }
 
-// Log system activity
+// Log system activity - FIXED VERSION!
 if (!function_exists('log_activity')) {
     function log_activity($conn, $user_id, $action, $description = null) {
-        $ip_address = $_SERVER['REMOTE_ADDR'];
-        
-        $stmt = $conn->prepare("INSERT INTO system_logs (user_id, action, description, ip_address) VALUES (?, ?, ?, ?)");
-        $stmt->bind_param("isss", $user_id, $action, $description, $ip_address);
+        // Insert into activity_logs table (not system_logs!)
+        $stmt = $conn->prepare("INSERT INTO activity_logs (user_id, activity_type, activity_description, activity_date) VALUES (?, ?, ?, NOW())");
+        $stmt->bind_param("iss", $user_id, $action, $description);
         $stmt->execute();
         $stmt->close();
     }
