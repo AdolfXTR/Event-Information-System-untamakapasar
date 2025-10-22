@@ -75,6 +75,29 @@ if (isset($_POST['create_announcement'])) {
         $stmt->bind_param("ssssii", $title, $content, $announcement_type, $image_name, $is_published, $user_id);
         
         if ($stmt->execute()) {
+            $announcement_id = $stmt->insert_id;
+            
+            // 🔔 SEND NOTIFICATIONS TO ALL STUDENTS IF PUBLISHED
+            if ($is_published) {
+                $notification_title = "New Announcement: " . $title;
+                $notification_message = "A new announcement has been posted. Check it out!";
+                
+                // Get all active students
+                $students_query = "SELECT user_id FROM users WHERE user_type = 'student' AND status = 'active'";
+                $students_result = $conn->query($students_query);
+                
+                if ($students_result->num_rows > 0) {
+                    $notif_stmt = $conn->prepare("INSERT INTO notifications (user_id, notification_type, notification_title, notification_message, is_read) VALUES (?, 'general', ?, ?, 0)");
+                    
+                    while ($student = $students_result->fetch_assoc()) {
+                        $notif_stmt->bind_param("iss", $student['user_id'], $notification_title, $notification_message);
+                        $notif_stmt->execute();
+                    }
+                    
+                    $notif_stmt->close();
+                }
+            }
+            
             log_activity($conn, $user_id, 'Announcement Created', 'Created announcement: ' . $title);
             set_message('success', 'Announcement posted successfully!');
             header("Location: announcements.php");
@@ -139,7 +162,7 @@ if (isset($_POST['update_announcement'])) {
     
     if (empty($errors)) {
         $stmt = $conn->prepare("UPDATE announcements SET title = ?, content = ?, announcement_type = ?, announcement_image = ?, is_published = ? WHERE announcement_id = ? AND created_by = ?");
-       $stmt->bind_param("ssssiii", $title, $content, $announcement_type, $image_name, $is_published, $announcement_id, $user_id);
+        $stmt->bind_param("ssssiii", $title, $content, $announcement_type, $image_name, $is_published, $announcement_id, $user_id);
         
         if ($stmt->execute()) {
             log_activity($conn, $user_id, 'Announcement Updated', 'Updated announcement: ' . $title);
@@ -413,20 +436,6 @@ $stmt->close();
             margin-bottom: 12px;
         }
 
-        .remove-image-btn {
-            position: absolute;
-            top: 8px;
-            right: 8px;
-            padding: 6px 12px;
-            background: rgba(220, 38, 38, 0.9);
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-size: 12px;
-            cursor: pointer;
-            font-weight: 600;
-        }
-
         .checkbox-group {
             display: flex;
             align-items: center;
@@ -659,7 +668,7 @@ $stmt->close();
     <div class="main-container">
         <div class="page-header">
             <h1 class="page-title">Announcements</h1>
-            <p class="page-subtitle">Post and manage announcements for students</p>
+            <p class="page-subtitle">Post and manage announcements for students (Students will be notified 🔔)</p>
         </div>
 
         <?php display_message(); ?>
@@ -743,7 +752,7 @@ $stmt->close();
                                    class="checkbox-input" value="1" 
                                    <?php echo (!$edit_mode || ($edit_mode && $edit_data['is_published'])) ? 'checked' : ''; ?>>
                             <label for="is_published" class="checkbox-label">
-                                <?php echo $edit_mode ? 'Published' : 'Publish immediately'; ?>
+                                <?php echo $edit_mode ? 'Published' : 'Publish immediately (Notify all students 🔔)'; ?>
                             </label>
                         </div>
                     </div>

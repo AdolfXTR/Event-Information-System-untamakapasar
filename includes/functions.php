@@ -154,6 +154,36 @@ if (!function_exists('time_ago')) {
     }
 }
 
+// 🔔 Time elapsed string for notifications (same as time_ago but different name)
+if (!function_exists('time_elapsed_string')) {
+    function time_elapsed_string($datetime) {
+        $time = strtotime($datetime);
+        $time_diff = time() - $time;
+        
+        if ($time_diff < 60) {
+            return 'just now';
+        } elseif ($time_diff < 3600) {
+            $minutes = floor($time_diff / 60);
+            return $minutes . ' minute' . ($minutes > 1 ? 's' : '') . ' ago';
+        } elseif ($time_diff < 86400) {
+            $hours = floor($time_diff / 3600);
+            return $hours . ' hour' . ($hours > 1 ? 's' : '') . ' ago';
+        } elseif ($time_diff < 604800) {
+            $days = floor($time_diff / 86400);
+            return $days . ' day' . ($days > 1 ? 's' : '') . ' ago';
+        } elseif ($time_diff < 2592000) {
+            $weeks = floor($time_diff / 604800);
+            return $weeks . ' week' . ($weeks > 1 ? 's' : '') . ' ago';
+        } elseif ($time_diff < 31536000) {
+            $months = floor($time_diff / 2592000);
+            return $months . ' month' . ($months > 1 ? 's' : '') . ' ago';
+        } else {
+            $years = floor($time_diff / 31536000);
+            return $years . ' year' . ($years > 1 ? 's' : '') . ' ago';
+        }
+    }
+}
+
 // Upload file function
 if (!function_exists('upload_file')) {
     function upload_file($file, $target_dir, $allowed_types = ['jpg', 'jpeg', 'png', 'gif']) {

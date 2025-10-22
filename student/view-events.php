@@ -12,6 +12,14 @@ $user_id = $_SESSION['user_id'];
 $first_name = $_SESSION['first_name'];
 $last_name = $_SESSION['last_name'];
 
+// Get unread notification count
+$unread_notif_query = "SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND is_read = 0";
+$notif_stmt = $conn->prepare($unread_notif_query);
+$notif_stmt->bind_param("i", $user_id);
+$notif_stmt->execute();
+$unread_count = $notif_stmt->get_result()->fetch_assoc()['count'];
+$notif_stmt->close();
+
 // Get user profile picture
 $user_query = "SELECT profile_picture FROM users WHERE user_id = ?";
 $stmt = $conn->prepare($user_query);
@@ -83,6 +91,7 @@ $categories_result = $conn->query($categories_query);
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Browse Events - SAO</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * {
             margin: 0;
@@ -147,6 +156,37 @@ $categories_result = $conn->query($categories_query);
 
         .nav-links a:hover, .nav-links a.active {
             color: #1e3a8a;
+        }
+
+        /* Notification Bell */
+        .notification-bell {
+            position: relative;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+
+        .bell-icon {
+            font-size: 20px;
+            color: #4b5563;
+            transition: color 0.2s;
+        }
+
+        .bell-icon:hover {
+            color: #1e3a8a;
+        }
+
+        .notification-badge {
+            position: absolute;
+            top: -6px;
+            right: -8px;
+            background: #dc2626;
+            color: white;
+            font-size: 10px;
+            font-weight: 600;
+            padding: 2px 5px;
+            border-radius: 10px;
+            min-width: 18px;
+            text-align: center;
         }
 
         .user-avatar {
@@ -421,10 +461,26 @@ $categories_result = $conn->query($categories_query);
                 <a href="view-events.php" class="active">Events</a>
                 <a href="my-events.php">My Events</a>
                 <a href="announcements.php">Announcements</a>
+                
+                <!-- Notification Bell -->
+                <a href="notifications.php" class="notification-bell">
+                    <i class="fas fa-bell bell-icon"></i>
+                    <?php if ($unread_count > 0): ?>
+                        <span class="notification-badge"><?php echo $unread_count; ?></span>
+                    <?php endif; ?>
+                </a>
             </nav>
-            <div class="user-avatar" onclick="window.location.href='profile.php'">
-                <?php echo strtoupper(substr($first_name, 0, 1)); ?>
-            </div>
+            
+            <!-- Profile Picture - FIXED! -->
+            <?php if ($has_custom_pic): ?>
+                <img src="<?php echo $profile_pic_path; ?>" alt="Profile" 
+                     style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; cursor: pointer;" 
+                     onclick="window.location.href='profile.php'">
+            <?php else: ?>
+                <div class="user-avatar" onclick="window.location.href='profile.php'">
+                    <?php echo strtoupper(substr($first_name, 0, 1)); ?>
+                </div>
+            <?php endif; ?>
         </div>
     </header>
 

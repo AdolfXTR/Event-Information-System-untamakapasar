@@ -331,3 +331,35 @@ body {
     }
 }
 
+/* Notification Bell */
+.notification-bell {
+    position: relative;
+    cursor: pointer;
+    margin-right: 10px;
+}
+
+.bell-icon {
+    font-size: 20px;
+    color: #4b5563;
+    transition: color 0.2s;
+}
+
+.bell-icon:hover {
+    color: #1e3a8a;
+}
+
+
+/* Notification Bell */
+.notification-badge {
+    position: absolute;
+    top: -6px;
+    right: -8px;
+    background: #dc2626;
+    color: white;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 5px;
+    border-radius: 10px;
+    min-width: 18px;
+    text-align: center;
+}
