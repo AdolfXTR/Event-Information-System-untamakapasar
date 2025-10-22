@@ -9,9 +9,6 @@ if (!is_logged_in() || !is_sao_staff()) {
 }
 
 $user_id = $_SESSION['user_id'];
-$first_name = $_SESSION['first_name'];
-
-// Get event ID from URL
 $event_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
 
 if ($event_id == 0) {
@@ -28,30 +25,55 @@ $event = $stmt->get_result()->fetch_assoc();
 $stmt->close();
 
 if (!$event) {
-    set_message('danger', 'Event not found');
     header("Location: manage-events.php");
     exit();
 }
 
-// Handle Mark Attendance
-if (isset($_POST['mark_attendance'])) {
+$success_msg = '';
+$error_msg = '';
+
+// Handle attendance update
+if (isset($_POST['update_attendance'])) {
     $registration_id = intval($_POST['registration_id']);
-    $status = sanitize_input($_POST['status']);
+    $new_status = sanitize_input($_POST['attendance_status']);
+    $student_user_id = intval($_POST['student_user_id']);
     
-    $update_stmt = $conn->prepare("UPDATE event_registrations SET attendance_status = ? WHERE registration_id = ?");
-    $update_stmt->bind_param("si", $status, $registration_id);
+    // Update attendance
+    $update_query = "UPDATE event_registrations SET attendance_status = ? WHERE registration_id = ?";
+    $stmt = $conn->prepare($update_query);
+    $stmt->bind_param("si", $new_status, $registration_id);
     
-    if ($update_stmt->execute()) {
-        set_message('success', 'Attendance updated successfully');
+    if ($stmt->execute()) {
+        // Create notification for the student
+        $notification_title = "";
+        $notification_message = "";
+        
+        if ($new_status === 'attended') {
+            $notification_title = "Attendance Confirmed! ✅";
+            $notification_message = "Your attendance for '{$event['event_title']}' has been marked as ATTENDED. Thank you for participating!";
+        } elseif ($new_status === 'absent') {
+            $notification_title = "Attendance Marked Absent ❌";
+            $notification_message = "You were marked as ABSENT for '{$event['event_title']}'. If you believe this is an error, please contact SAO staff.";
+        }
+        
+        // Insert notification
+        $notif_query = "INSERT INTO notifications (user_id, notification_type, notification_title, notification_message, event_id, is_read) 
+                        VALUES (?, 'attendance', ?, ?, ?, 0)";
+        $notif_stmt = $conn->prepare($notif_query);
+        $notif_stmt->bind_param("issi", $student_user_id, $notification_title, $notification_message, $event_id);
+        $notif_stmt->execute();
+        $notif_stmt->close();
+        
+        log_activity($conn, $user_id, 'Attendance Updated', "Updated attendance for registration ID: $registration_id to $new_status");
+        $success_msg = "Attendance updated successfully! Student has been notified.";
+    } else {
+        $error_msg = "Failed to update attendance.";
     }
-    $update_stmt->close();
-    
-    header("Location: view-registrations.php?id=" . $event_id);
-    exit();
+    $stmt->close();
 }
 
-// Get all registrations for this event
-$registrations_query = "SELECT er.*, u.first_name, u.last_name, u.email, u.student_id, u.profile_picture
+// Get all registrations
+$registrations_query = "SELECT er.*, u.first_name, u.last_name, u.email, u.student_id, u.profile_picture, u.user_id
                         FROM event_registrations er
                         JOIN users u ON er.user_id = u.user_id
                         WHERE er.event_id = ?
@@ -60,16 +82,14 @@ $stmt = $conn->prepare($registrations_query);
 $stmt->bind_param("i", $event_id);
 $stmt->execute();
 $registrations = $stmt->get_result();
-$total_registrations = $registrations->num_rows;
 $stmt->close();
 
-// Count attendance statuses
-$attended_query = "SELECT COUNT(*) as count FROM event_registrations WHERE event_id = ? AND attendance_status = 'attended'";
-$stmt = $conn->prepare($attended_query);
-$stmt->bind_param("i", $event_id);
-$stmt->execute();
-$attended_count = $stmt->get_result()->fetch_assoc()['count'];
-$stmt->close();
+// Get statistics
+$total_registered = $registrations->num_rows;
+$attended_count = $conn->query("SELECT COUNT(*) as count FROM event_registrations WHERE event_id = $event_id AND attendance_status = 'attended'")->fetch_assoc()['count'];
+$absent_count = $conn->query("SELECT COUNT(*) as count FROM event_registrations WHERE event_id = $event_id AND attendance_status = 'absent'")->fetch_assoc()['count'];
+$pending_count = $total_registered - $attended_count - $absent_count;
+$attendance_rate = $total_registered > 0 ? round(($attended_count / $total_registered) * 100, 1) : 0;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -77,6 +97,7 @@ $stmt->close();
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Event Registrations - SAO Staff</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * {
             margin: 0;
@@ -85,423 +106,487 @@ $stmt->close();
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: #f8f9fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f7fa;
+            color: #2c3e50;
         }
 
-        .navbar {
-            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            padding: 20px 48px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            padding: 2rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
 
-        .nav-container {
-            max-width: 1440px;
+        .header-content {
+            max-width: 1200px;
             margin: 0 auto;
             display: flex;
+            justify-content: space-between;
             align-items: center;
-            gap: 20px;
         }
 
         .back-btn {
-            padding: 8px 16px;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.8rem 1.5rem;
             background: rgba(255,255,255,0.2);
             color: white;
             text-decoration: none;
-            border-radius: 6px;
-            font-size: 14px;
-            font-weight: 500;
-            transition: background 0.2s;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: all 0.3s ease;
         }
 
         .back-btn:hover {
             background: rgba(255,255,255,0.3);
+            transform: translateY(-2px);
         }
 
-        .page-title-nav {
-            font-size: 18px;
-            font-weight: 600;
+        .container {
+            max-width: 1200px;
+            margin: 2rem auto;
+            padding: 0 2rem;
         }
 
-        .main-container {
-            max-width: 1440px;
-            margin: 40px auto;
-            padding: 0 48px;
-        }
-
-        .page-header {
+        .event-info {
             background: white;
-            padding: 30px;
-            border-radius: 16px;
-            margin-bottom: 30px;
+            padding: 2rem;
+            border-radius: 12px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 2rem;
         }
 
         .event-title {
-            font-size: 28px;
-            font-weight: 700;
-            color: #1a1a1a;
-            margin-bottom: 10px;
+            font-size: 1.8rem;
+            color: #2c3e50;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
         }
 
         .event-meta {
             display: flex;
-            gap: 20px;
-            color: #6b7280;
-            font-size: 14px;
+            gap: 2rem;
+            color: #7f8c8d;
+            font-size: 0.95rem;
+        }
+
+        .meta-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .meta-item i {
+            color: #667eea;
+        }
+
+        .alert {
+            padding: 1rem 1.5rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            animation: slideIn 0.3s ease;
+        }
+
+        .alert-success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            border-left: 4px solid #2e7d32;
+        }
+
+        .alert-error {
+            background: #ffebee;
+            color: #c62828;
+            border-left: 4px solid #c62828;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 20px;
-            margin-bottom: 30px;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
         }
 
         .stat-card {
             background: white;
-            padding: 24px;
+            padding: 1.5rem;
             border-radius: 12px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            text-align: center;
         }
 
-        .stat-label {
-            font-size: 13px;
-            color: #6b7280;
-            font-weight: 600;
-            text-transform: uppercase;
-            margin-bottom: 8px;
+        .stat-card h3 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
         }
 
-        .stat-value {
-            font-size: 32px;
-            font-weight: 700;
-            color: #1a1a1a;
+        .stat-card p {
+            color: #7f8c8d;
+            font-size: 0.9rem;
         }
 
-        .actions-bar {
+        .stat-card.total h3 { color: #667eea; }
+        .stat-card.attended h3 { color: #2e7d32; }
+        .stat-card.absent h3 { color: #c62828; }
+        .stat-card.pending h3 { color: #ffa726; }
+
+        .registrations-card {
             background: white;
-            padding: 20px 30px;
             border-radius: 12px;
-            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .card-header {
+            padding: 1.5rem;
+            border-bottom: 2px solid #f0f0f0;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
 
-        .search-box {
+        .card-header h2 {
+            font-size: 1.3rem;
+            color: #2c3e50;
             display: flex;
-            gap: 10px;
-        }
-
-        .search-input {
-            padding: 10px 16px;
-            border: 1px solid #e5e7eb;
-            border-radius: 8px;
-            font-size: 14px;
-            width: 300px;
+            align-items: center;
+            gap: 0.5rem;
         }
 
         .export-btn {
-            padding: 10px 20px;
-            background: #1e3a8a;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.8rem 1.5rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            border: none;
+            text-decoration: none;
             border-radius: 8px;
             font-weight: 600;
-            cursor: pointer;
-            text-decoration: none;
-            font-size: 14px;
-            transition: background 0.2s;
+            transition: all 0.3s ease;
         }
 
         .export-btn:hover {
-            background: #1e40af;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .search-box {
+            padding: 1.5rem;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 0.8rem 1rem 0.8rem 2.5rem;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            transition: border-color 0.3s ease;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 2.5rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #7f8c8d;
         }
 
         .registrations-table {
-            background: white;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }
-
-        table {
             width: 100%;
-            border-collapse: collapse;
         }
 
-        thead {
-            background: #f9fafb;
+        .registrations-table thead {
+            background: #f8f9fa;
         }
 
-        th {
-            padding: 16px;
+        .registrations-table th {
+            padding: 1rem;
             text-align: left;
-            font-size: 13px;
             font-weight: 600;
-            color: #6b7280;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+            color: #2c3e50;
+            font-size: 0.9rem;
         }
 
-        td {
-            padding: 16px;
-            border-top: 1px solid #f3f4f6;
-            font-size: 14px;
+        .registrations-table td {
+            padding: 1rem;
+            border-bottom: 1px solid #f0f0f0;
         }
 
-        tr:hover {
-            background: #f9fafb;
+        .registrations-table tr:hover {
+            background: #f8f9fa;
         }
 
-        .student-info {
+        .student-cell {
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 1rem;
         }
 
         .student-avatar {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
-            background: #1e3a8a;
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 700;
-            font-size: 14px;
             object-fit: cover;
         }
 
-        .student-details {
-            display: flex;
-            flex-direction: column;
+        .student-info h4 {
+            color: #2c3e50;
+            font-size: 0.95rem;
+            margin-bottom: 0.2rem;
         }
 
-        .student-name {
-            font-weight: 600;
-            color: #1a1a1a;
+        .student-info p {
+            color: #7f8c8d;
+            font-size: 0.85rem;
         }
 
-        .student-id {
-            font-size: 12px;
-            color: #6b7280;
-        }
-
-        .status-badge {
-            padding: 6px 12px;
+        .badge {
+            display: inline-block;
+            padding: 0.4rem 0.8rem;
             border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
+            font-size: 0.8rem;
+            font-weight: 500;
         }
 
-        .status-registered {
-            background: #dbeafe;
-            color: #1e40af;
+        .badge.attended {
+            background: #e8f5e9;
+            color: #2e7d32;
         }
 
-        .status-attended {
-            background: #d1fae5;
-            color: #065f46;
+        .badge.absent {
+            background: #ffebee;
+            color: #c62828;
         }
 
-        .status-absent {
-            background: #fee2e2;
-            color: #991b1b;
+        .badge.registered {
+            background: #fff3e0;
+            color: #f57c00;
+        }
+
+        .attendance-form {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
         }
 
         .attendance-select {
-            padding: 6px 12px;
-            border: 1px solid #e5e7eb;
+            padding: 0.5rem;
+            border: 2px solid #e0e0e0;
             border-radius: 6px;
-            font-size: 13px;
+            font-size: 0.9rem;
             cursor: pointer;
         }
 
-        .mark-btn {
-            padding: 6px 12px;
-            background: #1e3a8a;
+        .update-btn {
+            padding: 0.5rem 1rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
             border-radius: 6px;
-            font-size: 12px;
             font-weight: 600;
             cursor: pointer;
-            transition: background 0.2s;
+            transition: all 0.3s ease;
         }
 
-        .mark-btn:hover {
-            background: #1e40af;
+        .update-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
         }
 
-        .no-registrations {
+        .empty-state {
             text-align: center;
-            padding: 60px 20px;
-            color: #9ca3af;
+            padding: 4rem 2rem;
+            color: #7f8c8d;
         }
 
-        .no-registrations h3 {
-            font-size: 18px;
-            margin-bottom: 8px;
-        }
-
-        .alert {
-            padding: 14px 18px;
-            border-radius: 10px;
-            margin-bottom: 24px;
-            font-size: 14px;
-        }
-
-        .alert-success {
-            background: #ecfdf5;
-            color: #065f46;
+        .empty-state i {
+            font-size: 5rem;
+            margin-bottom: 1rem;
+            opacity: 0.3;
         }
 
         @media (max-width: 768px) {
-            .navbar {
-                padding: 16px 24px;
-            }
-
-            .main-container {
-                padding: 24px;
+            .header-content {
+                flex-direction: column;
+                gap: 1rem;
             }
 
             .stats-grid {
                 grid-template-columns: 1fr;
             }
 
-            .actions-bar {
-                flex-direction: column;
-                gap: 16px;
+            .registrations-table {
+                font-size: 0.85rem;
             }
 
-            .search-input {
-                width: 100%;
-            }
-
-            table {
-                font-size: 12px;
-            }
-
-            th, td {
-                padding: 12px 8px;
+            .container {
+                padding: 0 1rem;
             }
         }
     </style>
 </head>
 <body>
-    <nav class="navbar">
-        <div class="nav-container">
-            <a href="manage-events.php" class="back-btn">← Back to Events</a>
-            <span class="page-title-nav">Event Registrations</span>
+    <div class="header">
+        <div class="header-content">
+            <h1><i class="fas fa-clipboard-check"></i> Event Registrations</h1>
+            <a href="manage-events.php" class="back-btn">
+                <i class="fas fa-arrow-left"></i>
+                Back to Events
+            </a>
         </div>
-    </nav>
+    </div>
 
-    <div class="main-container">
-        <?php display_message(); ?>
+    <div class="container">
+        <?php if (!empty($success_msg)): ?>
+        <div class="alert alert-success">
+            <i class="fas fa-check-circle"></i>
+            <?php echo $success_msg; ?>
+        </div>
+        <?php endif; ?>
 
-        <div class="page-header">
-            <h1 class="event-title"><?php echo htmlspecialchars($event['event_title']); ?></h1>
+        <?php if (!empty($error_msg)): ?>
+        <div class="alert alert-error">
+            <i class="fas fa-exclamation-circle"></i>
+            <?php echo $error_msg; ?>
+        </div>
+        <?php endif; ?>
+
+        <div class="event-info">
+            <div class="event-title">
+                🌟 <?php echo htmlspecialchars($event['event_title']); ?>
+            </div>
             <div class="event-meta">
-                <span>📅 <?php echo format_date($event['event_date']); ?></span>
-                <span>⏰ <?php echo date('g:i A', strtotime($event['event_time'])); ?></span>
-                <span>📍 <?php echo htmlspecialchars($event['event_venue']); ?></span>
+                <div class="meta-item">
+                    <i class="fas fa-calendar"></i>
+                    <?php echo date('F j, Y', strtotime($event['event_date'])); ?>
+                </div>
+                <div class="meta-item">
+                    <i class="fas fa-clock"></i>
+                    <?php echo date('g:i A', strtotime($event['event_time'])); ?>
+                </div>
+                <div class="meta-item">
+                    <i class="fas fa-map-marker-alt"></i>
+                    <?php echo htmlspecialchars($event['event_venue']); ?>
+                </div>
             </div>
         </div>
 
         <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-label">Total Registrations</div>
-                <div class="stat-value"><?php echo $total_registrations; ?></div>
+            <div class="stat-card total">
+                <h3><?php echo $total_registered; ?></h3>
+                <p>Total Registrations</p>
             </div>
-            <div class="stat-card">
-                <div class="stat-label">Attended</div>
-                <div class="stat-value"><?php echo $attended_count; ?></div>
+            <div class="stat-card attended">
+                <h3><?php echo $attended_count; ?></h3>
+                <p>Attended</p>
             </div>
-            <div class="stat-card">
-                <div class="stat-label">Attendance Rate</div>
-                <div class="stat-value">
-                    <?php echo $total_registrations > 0 ? round(($attended_count / $total_registrations) * 100) : 0; ?>%
-                </div>
+            <div class="stat-card absent">
+                <h3><?php echo $absent_count; ?></h3>
+                <p>Absent</p>
+            </div>
+            <div class="stat-card pending">
+                <h3><?php echo $attendance_rate; ?>%</h3>
+                <p>Attendance Rate</p>
             </div>
         </div>
 
-        <div class="actions-bar">
-            <div class="search-box">
-                <input type="text" id="searchInput" class="search-input" placeholder="🔍 Search students...">
+        <div class="registrations-card">
+            <div class="card-header">
+                <h2><i class="fas fa-users"></i> Registered Students</h2>
+                <a href="export-registrations.php?id=<?php echo $event_id; ?>" class="export-btn">
+                    <i class="fas fa-file-pdf"></i>
+                    View Report
+                </a>
             </div>
-            <a href="export-registrations.php?id=<?php echo $event_id; ?>" class="export-btn">
-                📊 Export to Excel
-            </a>
-        </div>
 
-        <div class="registrations-table">
-            <?php if ($total_registrations > 0): ?>
-                <table id="registrationsTable">
-                    <thead>
-                        <tr>
-                            <th>Student</th>
-                            <th>Email</th>
-                            <th>Student ID</th>
-                            <th>Registered On</th>
-                            <th>Status</th>
-                            <th>Mark Attendance</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php 
-                        mysqli_data_seek($registrations, 0);
-                        while ($reg = $registrations->fetch_assoc()): 
-                            $has_pic = !empty($reg['profile_picture']) && $reg['profile_picture'] != 'default.jpg';
-                            $pic_path = $has_pic ? "../assets/images/profiles/" . htmlspecialchars($reg['profile_picture']) : "";
-                        ?>
-                            <tr>
-                                <td>
-                                    <div class="student-info">
-                                        <?php if ($has_pic): ?>
-                                            <img src="<?php echo $pic_path; ?>" alt="Profile" class="student-avatar">
-                                        <?php else: ?>
-                                            <div class="student-avatar">
-                                                <?php echo strtoupper(substr($reg['first_name'], 0, 1)); ?>
-                                            </div>
-                                        <?php endif; ?>
-                                        <div class="student-details">
-                                            <span class="student-name"><?php echo htmlspecialchars($reg['first_name'] . ' ' . $reg['last_name']); ?></span>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td><?php echo htmlspecialchars($reg['email']); ?></td>
-                                <td><span class="student-id"><?php echo htmlspecialchars($reg['student_id']); ?></span></td>
-                                <td><?php echo date('M j, Y', strtotime($reg['registration_date'])); ?></td>
-                                <td>
-                                    <span class="status-badge status-<?php echo $reg['attendance_status']; ?>">
-                                        <?php echo ucfirst($reg['attendance_status']); ?>
-                                    </span>
-                                </td>
-                                <td>
-                                    <form method="POST" style="display: flex; gap: 8px; align-items: center;">
-                                        <input type="hidden" name="registration_id" value="<?php echo $reg['registration_id']; ?>">
-                                        <select name="status" class="attendance-select">
-                                            <option value="registered" <?php echo $reg['attendance_status'] == 'registered' ? 'selected' : ''; ?>>Registered</option>
-                                            <option value="attended" <?php echo $reg['attendance_status'] == 'attended' ? 'selected' : ''; ?>>Attended</option>
-                                            <option value="absent" <?php echo $reg['attendance_status'] == 'absent' ? 'selected' : ''; ?>>Absent</option>
-                                        </select>
-                                        <button type="submit" name="mark_attendance" class="mark-btn">Update</button>
-                                    </form>
-                                </td>
-                            </tr>
-                        <?php endwhile; ?>
-                    </tbody>
-                </table>
+            <div class="search-box" style="position: relative;">
+                <i class="fas fa-search search-icon"></i>
+                <input type="text" id="searchInput" class="search-input" placeholder="Search students...">
+            </div>
+
+            <?php if ($total_registered > 0): ?>
+            <table class="registrations-table">
+                <thead>
+                    <tr>
+                        <th>Student</th>
+                        <th>Email</th>
+                        <th>Student ID</th>
+                        <th>Registered On</th>
+                        <th>Status</th>
+                        <th>Mark Attendance</th>
+                    </tr>
+                </thead>
+                <tbody id="registrationsTable">
+                    <?php 
+                    mysqli_data_seek($registrations, 0);
+                    while ($reg = $registrations->fetch_assoc()): 
+                        $avatar = $reg['profile_picture'] != 'default.jpg' 
+                            ? '../assets/images/profiles/' . $reg['profile_picture']
+                            : '../assets/images/default-avatar.png';
+                    ?>
+                    <tr>
+                        <td>
+                            <div class="student-cell">
+                                <img src="<?php echo htmlspecialchars($avatar); ?>" alt="Student" class="student-avatar">
+                                <div class="student-info">
+                                    <h4><?php echo htmlspecialchars($reg['first_name'] . ' ' . $reg['last_name']); ?></h4>
+                                </div>
+                            </div>
+                        </td>
+                        <td><?php echo htmlspecialchars($reg['email']); ?></td>
+                        <td><?php echo htmlspecialchars($reg['student_id']); ?></td>
+                        <td><?php echo date('M j, Y', strtotime($reg['registration_date'])); ?></td>
+                        <td>
+                            <span class="badge <?php echo $reg['attendance_status']; ?>">
+                                <?php echo ucfirst($reg['attendance_status']); ?>
+                            </span>
+                        </td>
+                        <td>
+                            <form method="POST" class="attendance-form">
+                                <input type="hidden" name="registration_id" value="<?php echo $reg['registration_id']; ?>">
+                                <input type="hidden" name="student_user_id" value="<?php echo $reg['user_id']; ?>">
+                                <select name="attendance_status" class="attendance-select">
+                                    <option value="registered" <?php echo $reg['attendance_status'] == 'registered' ? 'selected' : ''; ?>>Registered</option>
+                                    <option value="attended" <?php echo $reg['attendance_status'] == 'attended' ? 'selected' : ''; ?>>Attended</option>
+                                    <option value="absent" <?php echo $reg['attendance_status'] == 'absent' ? 'selected' : ''; ?>>Absent</option>
+                                </select>
+                                <button type="submit" name="update_attendance" class="update-btn">Update</button>
+                            </form>
+                        </td>
+                    </tr>
+                    <?php endwhile; ?>
+                </tbody>
+            </table>
             <?php else: ?>
-                <div class="no-registrations">
-                    <h3>No registrations yet</h3>
-                    <p>Students haven't registered for this event</p>
-                </div>
+            <div class="empty-state">
+                <i class="fas fa-inbox"></i>
+                <h3>No Registrations Yet</h3>
+                <p>No students have registered for this event</p>
+            </div>
             <?php endif; ?>
         </div>
     </div>
@@ -509,21 +594,23 @@ $stmt->close();
     <script>
         // Search functionality
         document.getElementById('searchInput').addEventListener('keyup', function() {
-            const searchValue = this.value.toLowerCase();
-            const table = document.getElementById('registrationsTable');
-            const rows = table.getElementsByTagName('tr');
-
-            for (let i = 1; i < rows.length; i++) {
-                const row = rows[i];
+            const searchTerm = this.value.toLowerCase();
+            const rows = document.querySelectorAll('#registrationsTable tr');
+            
+            rows.forEach(row => {
                 const text = row.textContent.toLowerCase();
-                
-                if (text.includes(searchValue)) {
-                    row.style.display = '';
-                } else {
-                    row.style.display = 'none';
-                }
-            }
+                row.style.display = text.includes(searchTerm) ? '' : 'none';
+            });
         });
+
+        // Auto-hide alerts
+        setTimeout(() => {
+            const alerts = document.querySelectorAll('.alert');
+            alerts.forEach(alert => {
+                alert.style.animation = 'slideOut 0.3s ease';
+                setTimeout(() => alert.remove(), 300);
+            });
+        }, 5000);
     </script>
 </body>
 </html>

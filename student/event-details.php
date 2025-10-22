@@ -12,6 +12,14 @@ $user_id = $_SESSION['user_id'];
 $first_name = $_SESSION['first_name'];
 $last_name = $_SESSION['last_name'];
 
+// Get unread notification count
+$unread_notif_query = "SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND is_read = 0";
+$notif_stmt = $conn->prepare($unread_notif_query);
+$notif_stmt->bind_param("i", $user_id);
+$notif_stmt->execute();
+$unread_count = $notif_stmt->get_result()->fetch_assoc()['count'];
+$notif_stmt->close();
+
 // Get user profile picture
 $user_query = "SELECT profile_picture FROM users WHERE user_id = ?";
 $stmt = $conn->prepare($user_query);
@@ -126,6 +134,7 @@ $is_full = $event['max_participants'] && $event['registered_count'] >= $event['m
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo htmlspecialchars($event['event_title']); ?> - SAO Events</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * {
             margin: 0;
@@ -174,6 +183,7 @@ $is_full = $event['max_participants'] && $event['registered_count'] >= $event['m
             display: flex;
             align-items: center;
             gap: 12px;
+            flex: 1;
         }
 
         .logo-img {
@@ -184,6 +194,48 @@ $is_full = $event['max_participants'] && $event['registered_count'] >= $event['m
         .brand-name {
             font-size: 16px;
             font-weight: 600;
+        }
+
+        /* Notification Bell */
+        .notification-bell {
+            position: relative;
+            cursor: pointer;
+            padding: 8px 12px;
+            border-radius: 6px;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            margin-left: auto;
+            margin-right: 10px;
+        }
+
+        .notification-bell:hover {
+            background: #f3f4f6;
+        }
+
+        .bell-icon {
+            font-size: 18px;
+            color: #6b7280;
+            transition: color 0.2s;
+        }
+
+        .notification-bell:hover .bell-icon {
+            color: #1a1a1a;
+        }
+
+        .notification-badge {
+            position: absolute;
+            top: 4px;
+            right: 6px;
+            background: #dc2626;
+            color: white;
+            font-size: 10px;
+            font-weight: 600;
+            padding: 2px 5px;
+            border-radius: 10px;
+            min-width: 16px;
+            text-align: center;
         }
 
         .main-container {
@@ -484,6 +536,14 @@ $is_full = $event['max_participants'] && $event['registered_count'] >= $event['m
                 <img src="../assets/images/logo.png" alt="Logo" class="logo-img">
                 <span class="brand-name">Event Details</span>
             </div>
+            
+            <!-- Notification Bell -->
+            <a href="notifications.php" class="notification-bell">
+                <i class="fas fa-bell bell-icon"></i>
+                <?php if ($unread_count > 0): ?>
+                    <span class="notification-badge"><?php echo $unread_count; ?></span>
+                <?php endif; ?>
+            </a>
         </div>
     </nav>
 

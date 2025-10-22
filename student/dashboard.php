@@ -27,6 +27,14 @@ $profile_pic_path = $has_custom_pic
 
 $stmt->close();
 
+// 🔔 Get unread notification count
+$unread_notif_query = "SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND is_read = 0";
+$stmt = $conn->prepare($unread_notif_query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$unread_count = $stmt->get_result()->fetch_assoc()['count'];
+$stmt->close();
+
 // Get statistics
 $total_events_query = "SELECT COUNT(*) as total FROM events WHERE is_published = 1 AND event_date >= CURDATE()";
 $total_events_result = $conn->query($total_events_query);
@@ -69,6 +77,7 @@ $recent_announcements = $conn->query($recent_announcements_query);
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard - Event Information System</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * {
             margin: 0;
@@ -145,6 +154,63 @@ $recent_announcements = $conn->query($recent_announcements_query);
         .nav-link.active {
             color: #1a1a1a;
             background: #f3f4f6;
+        }
+
+        /* 🔔 RIGHT SIDE: Notification Bell + User Section */
+        .nav-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        /* 🔔 Notification Bell */
+        .notif-bell {
+            position: relative;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: #f3f4f6;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            color: #6b7280;
+        }
+
+        .notif-bell:hover {
+            background: #e5e7eb;
+            color: #1a1a1a;
+        }
+
+        .notif-bell i {
+            font-size: 18px;
+        }
+
+        /* 🔴 Red Badge for Unread Count */
+        .notif-badge {
+            position: absolute;
+            top: -4px;
+            right: -4px;
+            background: #ef4444;
+            color: white;
+            font-size: 11px;
+            font-weight: 600;
+            min-width: 20px;
+            height: 20px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 6px;
+            box-shadow: 0 2px 4px rgba(239, 68, 68, 0.3);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
         }
 
         .user-section {
@@ -558,6 +624,10 @@ $recent_announcements = $conn->query($recent_announcements_query);
             .badge {
                 align-self: flex-start;
             }
+
+            .user-name {
+                display: none;
+            }
         }
     </style>
 </head>
@@ -577,15 +647,27 @@ $recent_announcements = $conn->query($recent_announcements_query);
                 <a href="announcements.php" class="nav-link">Announcements</a>
             </div>
 
-            <div class="user-section" onclick="window.location.href='profile.php'">
-                <?php if ($has_custom_pic): ?>
-                    <img src="<?php echo $profile_pic_path; ?>" alt="Profile" class="avatar" style="object-fit: cover;">
-                <?php else: ?>
-                    <div class="avatar">
-                        <?php echo strtoupper(substr($first_name, 0, 1)); ?>
-                    </div>
-                <?php endif; ?>
-                <span class="user-name"><?php echo htmlspecialchars($first_name . ' ' . $last_name); ?></span>
+            <!-- 🔔 RIGHT SIDE: Notification + User -->
+            <div class="nav-right">
+                <!-- 🔔 NOTIFICATION BELL -->
+                <a href="notifications.php" class="notif-bell" title="Notifications">
+                    <i class="fas fa-bell"></i>
+                    <?php if ($unread_count > 0): ?>
+                        <span class="notif-badge"><?php echo $unread_count; ?></span>
+                    <?php endif; ?>
+                </a>
+
+                <!-- USER SECTION -->
+                <div class="user-section" onclick="window.location.href='profile.php'">
+                    <?php if ($has_custom_pic): ?>
+                        <img src="<?php echo $profile_pic_path; ?>" alt="Profile" class="avatar" style="object-fit: cover;">
+                    <?php else: ?>
+                        <div class="avatar">
+                            <?php echo strtoupper(substr($first_name, 0, 1)); ?>
+                        </div>
+                    <?php endif; ?>
+                    <span class="user-name"><?php echo htmlspecialchars($first_name . ' ' . $last_name); ?></span>
+                </div>
             </div>
         </div>
     </nav>

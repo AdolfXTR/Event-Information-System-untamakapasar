@@ -12,6 +12,14 @@ $user_id = $_SESSION['user_id'];
 $first_name = $_SESSION['first_name'];
 $last_name = $_SESSION['last_name'];
 
+// Get unread notification count
+$unread_notif_query = "SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND is_read = 0";
+$notif_stmt = $conn->prepare($unread_notif_query);
+$notif_stmt->bind_param("i", $user_id);
+$notif_stmt->execute();
+$unread_count = $notif_stmt->get_result()->fetch_assoc()['count'];
+$notif_stmt->close();
+
 // Get user profile picture
 $user_query = "SELECT profile_picture FROM users WHERE user_id = ?";
 $stmt = $conn->prepare($user_query);
@@ -79,6 +87,7 @@ $stmt->close();
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Registered Events - SAO</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * {
             margin: 0;
@@ -127,6 +136,7 @@ $stmt->close();
         .nav-links {
             display: flex;
             gap: 8px;
+            align-items: center;
         }
 
         .nav-link {
@@ -142,6 +152,46 @@ $stmt->close();
         .nav-link:hover, .nav-link.active {
             background: #f3f4f6;
             color: #1a1a1a;
+        }
+
+        /* Notification Bell */
+        .notification-bell {
+            position: relative;
+            cursor: pointer;
+            padding: 8px 12px;
+            border-radius: 6px;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+        }
+
+        .notification-bell:hover {
+            background: #f3f4f6;
+        }
+
+        .bell-icon {
+            font-size: 18px;
+            color: #6b7280;
+            transition: color 0.2s;
+        }
+
+        .notification-bell:hover .bell-icon {
+            color: #1a1a1a;
+        }
+
+        .notification-badge {
+            position: absolute;
+            top: 4px;
+            right: 6px;
+            background: #dc2626;
+            color: white;
+            font-size: 10px;
+            font-weight: 600;
+            padding: 2px 5px;
+            border-radius: 10px;
+            min-width: 16px;
+            text-align: center;
         }
 
         .user-avatar {
@@ -448,6 +498,14 @@ $stmt->close();
                 <a href="view-events.php" class="nav-link">Events</a>
                 <a href="my-events.php" class="nav-link active">My Events</a>
                 <a href="announcements.php" class="nav-link">Announcements</a>
+                
+                <!-- Notification Bell -->
+                <a href="notifications.php" class="notification-bell">
+                    <i class="fas fa-bell bell-icon"></i>
+                    <?php if ($unread_count > 0): ?>
+                        <span class="notification-badge"><?php echo $unread_count; ?></span>
+                    <?php endif; ?>
+                </a>
             </div>
 
             <div class="user-avatar" onclick="window.location.href='profile.php'">

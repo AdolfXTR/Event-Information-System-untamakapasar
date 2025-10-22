@@ -66,8 +66,29 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         
         if ($stmt->execute()) {
             $event_id = $stmt->insert_id;
-            log_activity($conn, $user_id, 'Event Created', 'Created event: ' . $event_title);
             
+            // 🔔 SEND NOTIFICATIONS TO ALL STUDENTS IF PUBLISHED
+            if ($is_published) {
+                $notification_title = "New Event: " . $event_title;
+                $notification_message = "A new event has been published! Check it out and register now.";
+                
+                // Get all active students
+                $students_query = "SELECT user_id FROM users WHERE user_type = 'student' AND status = 'active'";
+                $students_result = $conn->query($students_query);
+                
+                if ($students_result->num_rows > 0) {
+                    $notif_stmt = $conn->prepare("INSERT INTO notifications (user_id, notification_type, notification_title, notification_message, event_id, is_read) VALUES (?, 'general', ?, ?, ?, 0)");
+                    
+                    while ($student = $students_result->fetch_assoc()) {
+                        $notif_stmt->bind_param("issi", $student['user_id'], $notification_title, $notification_message, $event_id);
+                        $notif_stmt->execute();
+                    }
+                    
+                    $notif_stmt->close();
+                }
+            }
+            
+            log_activity($conn, $user_id, 'Event Created', 'Created event: ' . $event_title);
             set_message('success', 'Event created successfully!');
             header("Location: manage-events.php");
             exit();
@@ -391,7 +412,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     <div class="main-container">
         <div class="page-header">
             <h1 class="page-title">Create New Event</h1>
-            <p class="page-subtitle">Fill in the details to create a new event for students</p>
+            <p class="page-subtitle">Fill in the details to create a new event for students (Students will be notified 🔔)</p>
         </div>
 
         <?php if (!empty($errors)): ?>
@@ -509,7 +530,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     <div class="checkbox-group">
                         <input type="checkbox" name="is_published" id="is_published" class="checkbox-input" value="1">
                         <label for="is_published" class="checkbox-label">
-                            Publish this event immediately (students will be able to see and register)
+                            Publish this event immediately (All students will be notified 🔔)
                         </label>
                     </div>
                 </div>
